@@ -1,0 +1,18 @@
+{
+  // Editor/LSP config (e.g. vtsls). The Deno toolchain does not need this
+  // file, but stock TypeScript does. Keep options Deno-compatible:
+  // no deprecated or Deno-unknown settings.
+  "compilerOptions": {
+    "target": "ES2020",
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "noImplicitOverride": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts", "esbuild.config.ts"]
+}
