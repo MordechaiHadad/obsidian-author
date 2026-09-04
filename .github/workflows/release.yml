@@ -58,16 +58,15 @@ jobs:
 
       - name: Package plugin zip
         run: |
-          cd output
-          zip -j "obsidian-author-${GITHUB_REF_NAME}.zip" main.js manifest.json styles.css
+          rm -rf package-root
+          mkdir -p package-root/obsidian-author
+          cp output/main.js output/manifest.json output/styles.css package-root/obsidian-author/
+          cd package-root
+          zip -r "../output/obsidian-author-${GITHUB_REF_NAME}.zip" obsidian-author
         env:
           GITHUB_REF_NAME: ${{ github.ref_name }}
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            output/main.js
-            output/manifest.json
-            output/styles.css
-            output/obsidian-author-v*.zip
+          files: output/obsidian-author-v*.zip
