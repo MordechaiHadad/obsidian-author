@@ -1,5 +1,5 @@
 import JSZip from "jszip";
-import type { Block, TextRunModel } from "./model.ts";
+import type { Block, TextRunModel } from "./text.ts";
 
 export interface EpubOptions {
   /** Book/chapter title (note name). */

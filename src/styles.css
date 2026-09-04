@@ -1,10 +1,11 @@
 /* Obsidian Author — manuscript typography stylesheet.
  *
- * Activated per-note via the author-manuscript class, which the plugin sets
- * on the container of every markdown leaf showing a note under the configured
- * manuscript folder. Container scoping (rather than body) keeps side-by-side
- * panes and pop-out windows correct, and matches how community typography
- * snippets scope per-note rules.
+ * Activated per-note via the author-manuscript class. The plugin sets it on
+ * the markdown leaf container (for the Live Preview editor) and directly on
+ * the .markdown-preview-view element (for Reading view AND the PDF export,
+ * which renders reading output into a separate container that drops outer
+ * classes). Reading selectors therefore key off the preview element itself,
+ * never its ancestors.
  *
  * Dynamic values arrive as CSS variables set by the plugin:
  *   --author-indent       first-line indent, e.g. 2em
@@ -15,12 +16,12 @@
  * Override any of these from your own CSS snippets.
  */
 
-.author-manuscript .markdown-reading-view .markdown-preview-view {
+.markdown-preview-view.author-manuscript {
   text-wrap: pretty;
 }
 
 /* Base rhythm for manuscript body text: no gaps between paragraphs. */
-.author-manuscript .markdown-reading-view .markdown-preview-view p {
+.markdown-preview-view.author-manuscript p {
   margin-block-start: 0;
   margin-block-end: 0;
   line-height: var(--author-line-height, 1.7);
@@ -34,33 +35,33 @@
 }
 
 /* Classic manuscript first-line indent. */
-.author-manuscript.author-indent .markdown-reading-view .markdown-preview-view p,
+.markdown-preview-view.author-manuscript.author-indent p,
 .author-manuscript.author-indent .cm-content .cm-line:not(.HyperMD-header):not(.HyperMD-list-line):not(.HyperMD-codeblock):not(.HyperMD-hr):not(.HyperMD-table-row):not(.HyperMD-frontmatter):not(.HyperMD-math) {
   text-indent: var(--author-indent, 2em);
 }
 
 /* The first paragraph of the note never indents (manuscript convention). */
-.author-manuscript.author-indent .markdown-reading-view .markdown-preview-view div.el-p:first-of-type p {
+.markdown-preview-view.author-manuscript.author-indent div.el-p:first-of-type p {
   text-indent: 0;
 }
 
 /* First paragraph after a heading or horizontal rule starts flush left. */
-.author-manuscript.author-flush-after-heading .markdown-reading-view .markdown-preview-view h1 + div.el-p p,
-.author-manuscript.author-flush-after-heading .markdown-reading-view .markdown-preview-view h2 + div.el-p p,
-.author-manuscript.author-flush-after-heading .markdown-reading-view .markdown-preview-view h3 + div.el-p p,
-.author-manuscript.author-flush-after-heading .markdown-reading-view .markdown-preview-view h4 + div.el-p p,
-.author-manuscript.author-flush-after-heading .markdown-reading-view .markdown-preview-view h5 + div.el-p p,
-.author-manuscript.author-flush-after-heading .markdown-reading-view .markdown-preview-view h6 + div.el-p p,
-.author-manuscript.author-flush-after-heading .markdown-reading-view .markdown-preview-view hr + div.el-p p {
+.markdown-preview-view.author-manuscript.author-flush-after-heading h1 + div.el-p p,
+.markdown-preview-view.author-manuscript.author-flush-after-heading h2 + div.el-p p,
+.markdown-preview-view.author-manuscript.author-flush-after-heading h3 + div.el-p p,
+.markdown-preview-view.author-manuscript.author-flush-after-heading h4 + div.el-p p,
+.markdown-preview-view.author-manuscript.author-flush-after-heading h5 + div.el-p p,
+.markdown-preview-view.author-manuscript.author-flush-after-heading h6 + div.el-p p,
+.markdown-preview-view.author-manuscript.author-flush-after-heading hr + div.el-p p {
   text-indent: 0;
 }
 
 /* Structural blocks never indent. */
-.author-manuscript.author-indent .markdown-reading-view .markdown-preview-view li p,
-.author-manuscript.author-indent .markdown-reading-view .markdown-preview-view blockquote p,
-.author-manuscript.author-indent .markdown-reading-view .markdown-preview-view .callout p,
-.author-manuscript.author-indent .markdown-reading-view .markdown-preview-view table p,
-.author-manuscript.author-indent .markdown-reading-view .markdown-preview-view pre p,
-.author-manuscript.author-indent .markdown-reading-view .markdown-preview-view .footnote p {
+.markdown-preview-view.author-manuscript.author-indent li p,
+.markdown-preview-view.author-manuscript.author-indent blockquote p,
+.markdown-preview-view.author-manuscript.author-indent .callout p,
+.markdown-preview-view.author-manuscript.author-indent table p,
+.markdown-preview-view.author-manuscript.author-indent pre p,
+.markdown-preview-view.author-manuscript.author-indent .footnote p {
   text-indent: 0;
 }

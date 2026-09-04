@@ -44,6 +44,8 @@ const VAR_LINE_HEIGHT = "--author-line-height";
 export default class AuthorPlugin extends Plugin {
   declare settings: AuthorSettings;
   private statusEl: HTMLElement | null = null;
+  private previewObserver: MutationObserver | null = null;
+  private previewScopeQueued = false;
 
   override async onload() {
     await this.loadSettings();
@@ -76,27 +78,103 @@ export default class AuthorPlugin extends Plugin {
     this.registerEvent(this.app.vault.on("create", () => this.refresh()));
     this.registerEvent(this.app.vault.on("delete", () => this.refresh()));
 
+    // Reading-view elements render asynchronously after their leaf opens.
+    // Watch for them and scope them when they appear.
+    this.previewObserver = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        for (const node of Array.from(mutation.addedNodes)) {
+          if (
+            node instanceof HTMLElement &&
+            (node.matches(".markdown-preview-view") ||
+              node.querySelector(".markdown-preview-view"))
+          ) {
+            this.queuePreviewScope();
+            return;
+          }
+        }
+      }
+    });
+    this.previewObserver.observe(document.body, {
+      childList: true,
+      subtree: true,
+    });
+
     this.app.workspace.onLayoutReady(() => this.refresh());
     this.refresh();
   }
 
   override onunload() {
+    this.previewObserver?.disconnect();
+    this.previewObserver = null;
     for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
       this.clearScope(leaf);
     }
     this.statusEl?.setText("");
   }
 
+  /** Throttled pass applying scope classes to reading-view elements. */
+  private queuePreviewScope(): void {
+    if (this.previewScopeQueued) return;
+    this.previewScopeQueued = true;
+    requestAnimationFrame(() => {
+      this.previewScopeQueued = false;
+      this.scopePreviewElements();
+    });
+  }
+
+  /** Toggle scope classes/values on every rendered reading view, matched to
+   * its leaf's file. This is what PDF export sees: it renders from reading
+   * output in a separate container that never gets leaf-container classes. */
+  private scopePreviewElements(): void {
+    const s = this.settings;
+    for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
+      const view = leaf.view;
+      if (!(view instanceof MarkdownView)) continue;
+      const preview = view.containerEl.querySelector(
+        ".markdown-preview-view",
+      );
+      if (!(preview instanceof HTMLElement)) continue;
+      const inScope = view.file instanceof TFile &&
+        this.isManuscriptFile(view.file);
+      preview.classList.toggle(SCOPE_CLASS, inScope);
+      preview.classList.toggle(CLASS_INDENT, inScope && s.enableIndent);
+      preview.classList.toggle(
+        CLASS_FLUSH_AFTER_HEADING,
+        inScope && s.enableIndent && s.removeIndentAfterHeading,
+      );
+      if (inScope) {
+        preview.style.setProperty(
+          VAR_INDENT,
+          this.sanitizeIndent(s.indentSize),
+        );
+        preview.style.setProperty(
+          VAR_LINE_HEIGHT,
+          this.sanitizeLineHeight(s.lineHeight),
+        );
+      } else {
+        preview.style.removeProperty(VAR_INDENT);
+        preview.style.removeProperty(VAR_LINE_HEIGHT);
+      }
+    }
+  }
+
   /** Remove all scope classes and variables from one leaf. */
   private clearScope(leaf: WorkspaceLeaf): void {
     if (!(leaf.view instanceof MarkdownView)) return;
-    leaf.view.containerEl.classList.remove(
-      SCOPE_CLASS,
-      CLASS_INDENT,
-      CLASS_FLUSH_AFTER_HEADING,
+    const elements = [leaf.view.containerEl];
+    const preview = leaf.view.containerEl.querySelector(
+      ".markdown-preview-view",
     );
-    leaf.view.containerEl.style.removeProperty(VAR_INDENT);
-    leaf.view.containerEl.style.removeProperty(VAR_LINE_HEIGHT);
+    if (preview instanceof HTMLElement) elements.push(preview);
+    for (const el of elements) {
+      el.classList.remove(
+        SCOPE_CLASS,
+        CLASS_INDENT,
+        CLASS_FLUSH_AFTER_HEADING,
+      );
+      el.style.removeProperty(VAR_INDENT);
+      el.style.removeProperty(VAR_LINE_HEIGHT);
+    }
   }
 
   async loadSettings() {
@@ -169,6 +247,7 @@ export default class AuthorPlugin extends Plugin {
     const active = this.app.workspace.getActiveFile();
     const activeOn = active instanceof TFile && this.isManuscriptFile(active);
     this.statusEl?.setText(activeOn ? "✒ Manuscript" : "");
+    this.scopePreviewElements();
   }
 
   private sanitizeIndent(input: string): string {
@@ -202,7 +281,11 @@ export default class AuthorPlugin extends Plugin {
       }
       const ext = format;
       const buffer = format === "docx"
-        ? await blocksToDocxBuffer(blocks, this.settings.indentSize)
+        ? await blocksToDocxBuffer(
+          blocks,
+          this.settings.indentSize,
+          this.settings.lineHeight,
+        )
         : await blocksToEpubBuffer(blocks, {
           title: file.basename,
           indent: this.sanitizeIndent(this.settings.indentSize),

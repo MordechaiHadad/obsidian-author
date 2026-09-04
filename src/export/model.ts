@@ -1,22 +1,7 @@
 /// <reference lib="dom" />
 import { App, Component, MarkdownRenderer, TFile } from "obsidian";
-
-/** Inline formatting for a slice of text. */
-export interface TextRunModel {
-  text: string;
-  bold: boolean;
-  italic: boolean;
-  strike: boolean;
-  code: boolean;
-}
-
-/** Block-level content of a note. Text-only by design (v1 skips images,
- * tables, math and embeds). */
-export type Block =
-  | { kind: "heading"; level: 1 | 2 | 3 | 4 | 5 | 6; runs: TextRunModel[] }
-  | { kind: "paragraph"; runs: TextRunModel[] }
-  | { kind: "list"; ordered: boolean; items: TextRunModel[][] }
-  | { kind: "break" };
+import type { Block, TextRunModel } from "./text.ts";
+import { splitOnBreaks } from "./text.ts";
 
 const blankRun = (text: string): TextRunModel => ({
   text,
@@ -27,7 +12,11 @@ const blankRun = (text: string): TextRunModel => ({
 });
 
 /** Render a note's markdown through Obsidian and extract a clean block model.
- * Frontmatter is stripped first; whitespace-only paragraphs are dropped. */
+ * Frontmatter is stripped first; whitespace-only paragraphs are dropped.
+ * Manuscript convention: every source line is its own paragraph, so rendered
+ * paragraphs are additionally split on soft breaks (literal newlines in text
+ * and <br> elements). This deliberately deviates from strict Markdown, where
+ * single newlines stay inside one paragraph. */
 export async function noteToBlocks(
   app: App,
   file: TFile,
@@ -51,7 +40,7 @@ function extractBlocks(host: HTMLElement): Block[] {
     const el = child as HTMLElement;
     const tag = el.tagName;
     if (/^H[1-6]$/.test(tag)) {
-      const runs = extractRuns(el);
+      const runs = flattenBreaks(extractRuns(el));
       if (hasText(runs)) {
         blocks.push({
           kind: "heading",
@@ -60,12 +49,13 @@ function extractBlocks(host: HTMLElement): Block[] {
         });
       }
     } else if (tag === "P") {
-      const runs = extractRuns(el);
-      if (hasText(runs)) blocks.push({ kind: "paragraph", runs });
+      for (const runs of splitOnBreaks(extractRuns(el))) {
+        if (hasText(runs)) blocks.push({ kind: "paragraph", runs });
+      }
     } else if (tag === "UL" || tag === "OL") {
       const items: TextRunModel[][] = [];
       for (const li of Array.from(el.querySelectorAll(":scope > li"))) {
-        const runs = extractRuns(li as HTMLElement);
+        const runs = flattenBreaks(extractRuns(li as HTMLElement));
         if (hasText(runs)) items.push(runs);
       }
       if (items.length > 0) {
@@ -86,8 +76,9 @@ function extractBlocks(host: HTMLElement): Block[] {
     } else if (tag === "BLOCKQUOTE") {
       // Quotes flatten to plain paragraphs in v1.
       for (const p of Array.from(el.querySelectorAll("p"))) {
-        const runs = extractRuns(p as HTMLElement);
-        if (hasText(runs)) blocks.push({ kind: "paragraph", runs });
+        for (const runs of splitOnBreaks(extractRuns(p as HTMLElement))) {
+          if (hasText(runs)) blocks.push({ kind: "paragraph", runs });
+        }
       }
     }
     // Tables, math, embeds and anything else are skipped in v1.
@@ -97,6 +88,13 @@ function extractBlocks(host: HTMLElement): Block[] {
 
 function hasText(runs: TextRunModel[]): boolean {
   return runs.some((r) => r.text.trim() !== "");
+}
+
+/** Collapse soft breaks to spaces (headings, list items). */
+function flattenBreaks(runs: TextRunModel[]): TextRunModel[] {
+  return runs.map((r) =>
+    r.text.includes("\n") ? { ...r, text: r.text.replace(/\n/g, " ") } : r
+  );
 }
 
 /** Collect inline runs, merging child formatting flags downwards. */
@@ -124,7 +122,7 @@ function extractRuns(
         code: base.code || tag === "CODE",
       };
       if (tag === "BR") {
-        runs.push({ ...base, text: " " });
+        runs.push({ ...base, text: "\n" });
       } else if (tag === "IMG") {
         continue; // Images are v1.1.
       } else {

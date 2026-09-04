@@ -1,7 +1,8 @@
 import JSZip from "jszip";
-import { blocksToDocxBuffer } from "../src/export/docx.ts";
+import { blocksToDocxBuffer, lengthToTwips } from "../src/export/docx.ts";
 import { blocksToEpubBuffer } from "../src/export/epub.ts";
-import type { Block } from "../src/export/model.ts";
+import type { Block, TextRunModel } from "../src/export/text.ts";
+import { splitOnBreaks } from "../src/export/text.ts";
 
 const blocks: Block[] = [
   {
@@ -68,7 +69,7 @@ const check = (name: string, cond: boolean) => {
 };
 
 // --- DOCX ---
-const docxBuf = await blocksToDocxBuffer(blocks, "2em");
+const docxBuf = await blocksToDocxBuffer(blocks, "2em", "1.7");
 const docxZip = await JSZip.loadAsync(docxBuf);
 const docXml = await docxZip.file("word/document.xml")?.async("string") ?? "";
 check("docx: document.xml exists", docXml.length > 0);
@@ -79,6 +80,11 @@ check(
 check(
   "docx: first paragraph flush (val=0)",
   docXml.includes('w:firstLine="0"'),
+);
+check("docx: no gap between paragraphs", docXml.includes('w:after="0"'));
+check(
+  "docx: line height 1.7 mapped (w:line=408)",
+  docXml.includes('w:line="408"'),
 );
 check("docx: heading style present", docXml.includes('w:val="Heading1"'));
 check("docx: bold run present", docXml.includes("<w:b/>"));
@@ -120,6 +126,34 @@ check("epub: scene break", chapter.includes('<p class="scene">* * *</p>'));
 const css = await epubZip.file("OEBPS/style.css")?.async("string") ?? "";
 check("epub: css has 2em indent", css.includes("text-indent: 2em;"));
 check("epub: nav exists", !!epubZip.file("OEBPS/nav.xhtml"));
+
+// --- Pure units ---
+check("twips: 2em -> 480", lengthToTwips("2em") === 480);
+check("twips: bare number -> em", lengthToTwips("1.5") === 360);
+check("twips: px @96dpi", lengthToTwips("32px") === 480);
+check("twips: garbage -> default 480", lengthToTwips("banana") === 480);
+
+const plain = (text: string): TextRunModel => ({
+  text,
+  bold: false,
+  italic: false,
+  strike: false,
+  code: false,
+});
+const split = splitOnBreaks([
+  plain("one\ntwo"),
+  { ...plain("three\nfour"), bold: true },
+]);
+check("split: 3 segments", split.length === 3);
+check(
+  "split: flags survive breaks",
+  split[1][0].text === "two" && split[1][1].text === "three" &&
+    split[1][1].bold && split[2][0].text === "four" && split[2][0].bold,
+);
+check(
+  "split: no breaks untouched",
+  splitOnBreaks([plain("abc")]).length === 1,
+);
 
 if (failures > 0) {
   throw new Error(`${failures} export test(s) failed`);

@@ -3,11 +3,13 @@ import {
   Document as DocxDocument,
   HeadingLevel,
   LevelFormat,
+  LineRuleType,
   Packer,
   Paragraph,
   TextRun,
 } from "docx";
-import type { Block, TextRunModel } from "./model.ts";
+import type { ISpacingProperties } from "docx";
+import type { Block, TextRunModel } from "./text.ts";
 
 /** Convert a CSS length to Word twips (1pt = 20 twips).
  * em/rem assume a 12pt body; px assumes 96dpi; % assumes a 6.5" text width.
@@ -25,6 +27,19 @@ export function lengthToTwips(input: string): number {
   const pct = num(/^(\d+(?:\.\d+)?)%$/);
   if (pct !== null) return Math.round((pct / 100) * 9360);
   return 480;
+}
+
+/** Manuscript body spacing: no gaps between paragraphs (the indent separates
+ * them), line height mapped from the unitless setting (×240 twips). */
+function bodySpacing(lineHeight: string): ISpacingProperties {
+  const parsed = Number((lineHeight ?? "").trim());
+  if (!Number.isFinite(parsed) || parsed <= 0) return { after: 0, before: 0 };
+  return {
+    after: 0,
+    before: 0,
+    line: Math.round(parsed * 240),
+    lineRule: LineRuleType.AUTO,
+  };
 }
 
 const BULLET_REF = "author-bullet";
@@ -48,8 +63,10 @@ function toTextRuns(runs: TextRunModel[]): TextRun[] {
 export async function blocksToDocxBuffer(
   blocks: Block[],
   indentSize: string,
+  lineHeight: string,
 ): Promise<ArrayBuffer> {
   const firstLine = lengthToTwips(indentSize);
+  const spacing = bodySpacing(lineHeight);
   const children: Paragraph[] = [];
   let indentedYet = false;
 
@@ -71,6 +88,7 @@ export async function blocksToDocxBuffer(
         children.push(
           new Paragraph({
             indent: { firstLine: indent },
+            spacing,
             children: toTextRuns(block.runs),
           }),
         );
@@ -84,6 +102,7 @@ export async function blocksToDocxBuffer(
                 reference: block.ordered ? DECIMAL_REF : BULLET_REF,
                 level: 0,
               },
+              spacing,
               children: toTextRuns(item),
             }),
           );
