@@ -1,0 +1,73 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Verify tag matches package versions
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: >-
+          deno eval '
+          const tag = Deno.env.get("GITHUB_REF_NAME") ?? "";
+          const fail = (msg: string): never => {
+            console.error(`version check failed: ${msg}`);
+            Deno.exit(1);
+          };
+          if (!/^v\d+\.\d+\.\d+$/.test(tag)) fail(`tag "${tag}" is not vx.y.z`);
+          const version = tag.slice(1);
+          const pkg = JSON.parse(await Deno.readTextFile("package.json"));
+          const manifest = JSON.parse(await Deno.readTextFile("manifest.json"));
+          const versions = JSON.parse(await Deno.readTextFile("versions.json"));
+          if (pkg.version !== version) {
+            fail(`package.json is ${pkg.version}, tag is ${version}`);
+          }
+          if (manifest.version !== version) {
+            fail(`manifest.json is ${manifest.version}, tag is ${version}`);
+          }
+          if (typeof versions[version] !== "string") {
+            fail(`versions.json has no entry for ${version}`);
+          }
+          console.log(`version check passed: ${version}`);
+          )'
+
+      - name: Install dependencies
+        run: deno install
+
+      - name: Test
+        run: deno task test
+
+      - name: Build
+        run: deno task build
+
+      - name: Package plugin zip
+        run: |
+          cd output
+          zip -j "obsidian-author-${GITHUB_REF_NAME}.zip" main.js manifest.json styles.css
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            output/main.js
+            output/manifest.json
+            output/styles.css
+            output/obsidian-author-v*.zip
