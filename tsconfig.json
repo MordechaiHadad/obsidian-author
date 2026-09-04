@@ -7,6 +7,7 @@
     "lib": ["ES2020", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    "allowImportingTsExtensions": true,
     "strict": true,
     "noImplicitOverride": true,
     "esModuleInterop": true,
@@ -14,5 +15,5 @@
     "isolatedModules": true,
     "types": ["node"]
   },
-  "include": ["src/**/*.ts", "esbuild.config.ts"]
+  "include": ["src/**/*.ts", "tests/**/*.ts", "esbuild.config.ts"]
 }

@@ -1,20 +1,23 @@
 {
   "name": "obsidian-author",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Writer's toolkit for Obsidian: manuscript typography for all notes under a chosen folder.",
   "scripts": {
     "dev": "deno run -A esbuild.config.ts",
     "build": "deno check src/main.ts esbuild.config.ts && deno lint && deno run -A esbuild.config.ts production",
     "check": "deno check src/main.ts esbuild.config.ts",
     "lint": "deno lint",
-    "fmt": "deno fmt"
+    "fmt": "deno fmt",
+    "test": "deno run --allow-all tests/export.ts"
   },
   "keywords": [],
   "author": "",
   "license": "MIT",
   "dependencies": {
     "@types/node": "^20.0.0",
+    "docx": "^9.5.1",
     "esbuild": "0.20.2",
+    "jszip": "^3.10.1",
     "obsidian": "latest"
   }
 }

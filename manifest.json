@@ -1,7 +1,7 @@
 {
   "id": "obsidian-author",
   "name": "Obsidian Author",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "minAppVersion": "0.15.0",
   "description": "Writer's toolkit: manuscript typography (first-line indent) for all notes under a chosen folder.",
   "author": "Writer",

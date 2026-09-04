@@ -3,6 +3,7 @@ import {
   AbstractInputSuggest,
   App,
   MarkdownView,
+  Notice,
   Plugin,
   PluginSettingTab,
   Setting,
@@ -10,6 +11,9 @@ import {
   TFolder,
   WorkspaceLeaf,
 } from "obsidian";
+import { blocksToDocxBuffer } from "./export/docx.ts";
+import { blocksToEpubBuffer } from "./export/epub.ts";
+import { noteToBlocks } from "./export/model.ts";
 
 interface AuthorSettings {
   manuscriptFolder: string;
@@ -46,6 +50,20 @@ export default class AuthorPlugin extends Plugin {
     this.addSettingTab(new AuthorSettingTab(this.app, this));
     // Status indicator: visible proof of manuscript scope for the active note.
     this.statusEl = this.addStatusBarItem();
+    this.addCommand({
+      id: "export-note-docx",
+      name: "Export current note to DOCX",
+      callback: () => {
+        void this.exportNote("docx");
+      },
+    });
+    this.addCommand({
+      id: "export-note-epub",
+      name: "Export current note to EPUB",
+      callback: () => {
+        void this.exportNote("epub");
+      },
+    });
 
     // Re-evaluate whenever the open note or vault contents may have changed.
     this.registerEvent(
@@ -165,6 +183,50 @@ export default class AuthorPlugin extends Plugin {
     const v = (input ?? "").trim() || DEFAULT_SETTINGS.lineHeight;
     if (/^\d+(\.\d+)?$/.test(v)) return v;
     return DEFAULT_SETTINGS.lineHeight;
+  }
+
+  /** Export the active Markdown note, preserving the first-line indent.
+   * Re-exporting overwrites the previous file next to the note. */
+  private async exportNote(format: "docx" | "epub"): Promise<void> {
+    const file = this.app.workspace.getActiveFile();
+    if (!(file instanceof TFile) || file.extension !== "md") {
+      new Notice("Obsidian Author: open a Markdown note to export.");
+      return;
+    }
+    try {
+      const content = await this.app.vault.read(file);
+      const blocks = await noteToBlocks(this.app, file, content);
+      if (blocks.length === 0) {
+        new Notice("Obsidian Author: nothing to export in this note.");
+        return;
+      }
+      const ext = format;
+      const buffer = format === "docx"
+        ? await blocksToDocxBuffer(blocks, this.settings.indentSize)
+        : await blocksToEpubBuffer(blocks, {
+          title: file.basename,
+          indent: this.sanitizeIndent(this.settings.indentSize),
+          lineHeight: this.sanitizeLineHeight(this.settings.lineHeight),
+        });
+      const dir = file.parent && file.parent.path !== "/"
+        ? `${file.parent.path}/`
+        : "";
+      const outPath = `${dir}${file.basename}.${ext}`;
+      const existing = this.app.vault.getAbstractFileByPath(outPath);
+      if (existing instanceof TFile) {
+        await this.app.vault.modifyBinary(existing, buffer);
+      } else {
+        await this.app.vault.createBinary(outPath, buffer);
+      }
+      new Notice(`Obsidian Author: exported ${outPath}.`);
+    } catch (error) {
+      console.error("[Obsidian Author] export failed:", error);
+      new Notice(
+        `Obsidian Author: export failed (${
+          error instanceof Error ? error.message : String(error)
+        }).`,
+      );
+    }
   }
 }
 
