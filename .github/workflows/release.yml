@@ -23,7 +23,7 @@ jobs:
       - name: Verify tag matches package versions
         env:
           GITHUB_REF_NAME: ${{ github.ref_name }}
-        run: >-
+        run: |
           deno eval '
           const tag = Deno.env.get("GITHUB_REF_NAME") ?? "";
           const fail = (msg: string): never => {
@@ -45,7 +45,7 @@ jobs:
             fail(`versions.json has no entry for ${version}`);
           }
           console.log(`version check passed: ${version}`);
-          )'
+          '
 
       - name: Install dependencies
         run: deno install
