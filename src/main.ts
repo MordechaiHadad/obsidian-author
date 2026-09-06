@@ -14,6 +14,7 @@ import {
 import { blocksToDocxBuffer } from "./export/docx.ts";
 import { blocksToEpubBuffer } from "./export/epub.ts";
 import { noteToBlocks } from "./export/model.ts";
+import { countWords, formatPrintPages, wordsToPages } from "./stats.ts";
 
 interface AuthorSettings {
   manuscriptFolder: string;
@@ -46,6 +47,7 @@ export default class AuthorPlugin extends Plugin {
   private statusEl: HTMLElement | null = null;
   private previewObserver: MutationObserver | null = null;
   private previewScopeQueued = false;
+  private statusTimer: ReturnType<typeof setTimeout> | null = null;
 
   override async onload() {
     await this.loadSettings();
@@ -77,6 +79,18 @@ export default class AuthorPlugin extends Plugin {
     this.registerEvent(this.app.vault.on("rename", () => this.refresh()));
     this.registerEvent(this.app.vault.on("create", () => this.refresh()));
     this.registerEvent(this.app.vault.on("delete", () => this.refresh()));
+    // Live print-page count: recompute (debounced) as the active note is
+    // edited, including edits made from another device / outside the editor.
+    this.registerEvent(
+      this.app.workspace.on("editor-change", () => this.scheduleStatusUpdate()),
+    );
+    this.registerEvent(
+      this.app.vault.on("modify", (file) => {
+        if (
+          file instanceof TFile && file === this.app.workspace.getActiveFile()
+        ) this.scheduleStatusUpdate();
+      }),
+    );
 
     // Reading-view elements render asynchronously after their leaf opens.
     // Watch for them and scope them when they appear.
@@ -106,6 +120,10 @@ export default class AuthorPlugin extends Plugin {
   override onunload() {
     this.previewObserver?.disconnect();
     this.previewObserver = null;
+    if (this.statusTimer !== null) {
+      globalThis.clearTimeout(this.statusTimer);
+      this.statusTimer = null;
+    }
     for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
       this.clearScope(leaf);
     }
@@ -246,8 +264,64 @@ export default class AuthorPlugin extends Plugin {
 
     const active = this.app.workspace.getActiveFile();
     const activeOn = active instanceof TFile && this.isManuscriptFile(active);
-    this.statusEl?.setText(activeOn ? "✒ Manuscript" : "");
+    if (!activeOn) this.statusEl?.setText("");
+    else void this.updateStatusBar();
     this.scopePreviewElements();
+  }
+
+  /** Debounced wrapper so fast typing re-reads at most ~3x/second. */
+  private scheduleStatusUpdate(): void {
+    if (this.statusTimer !== null) globalThis.clearTimeout(this.statusTimer);
+    this.statusTimer = globalThis.setTimeout(() => {
+      this.statusTimer = null;
+      void this.updateStatusBar();
+    }, 300);
+  }
+
+  /** Status bar: "✒ Manuscript · ~48 print pages". Core Obsidian already
+   * shows words/characters, so we only add the print-page estimate. */
+  private async updateStatusBar(): Promise<void> {
+    const active = this.app.workspace.getActiveFile();
+    if (!(active instanceof TFile) || !this.isManuscriptFile(active)) {
+      this.statusEl?.setText("");
+      return;
+    }
+    const live = this.getActiveEditorText(active);
+    if (live !== null) {
+      this.setStatusFromText(live);
+      return;
+    }
+    try {
+      const content = await this.app.vault.cachedRead(active);
+      // Guard against a race: user switched notes while reading.
+      if (this.app.workspace.getActiveFile() !== active) return;
+      this.setStatusFromText(content);
+    } catch (error) {
+      console.error("[Obsidian Author] page count read failed:", error);
+      this.statusEl?.setText("✒ Manuscript");
+    }
+  }
+
+  /** Fast path: current editor buffer, no vault I/O. Null when the active
+   * note isn't open in an editable Markdown view (e.g. Reading view). */
+  private getActiveEditorText(active: TFile): string | null {
+    for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
+      const view = leaf.view;
+      if (!(view instanceof MarkdownView)) continue;
+      if (view.file !== active) continue;
+      try {
+        const value = view.editor?.getValue();
+        if (typeof value === "string") return value;
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  private setStatusFromText(text: string): void {
+    const pages = wordsToPages(countWords(text));
+    this.statusEl?.setText(`✒ Manuscript · ${formatPrintPages(pages)}`);
   }
 
   private sanitizeIndent(input: string): string {
@@ -298,9 +372,7 @@ export default class AuthorPlugin extends Plugin {
       const existing = this.app.vault.getAbstractFileByPath(outPath);
       if (existing instanceof TFile) {
         await this.app.vault.modifyBinary(existing, buffer);
-      } else {
-        await this.app.vault.createBinary(outPath, buffer);
-      }
+      } else await this.app.vault.createBinary(outPath, buffer);
       new Notice(`Obsidian Author: exported ${outPath}.`);
     } catch (error) {
       console.error("[Obsidian Author] export failed:", error);

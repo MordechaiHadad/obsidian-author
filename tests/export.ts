@@ -1,6 +1,12 @@
 import JSZip from "jszip";
 import { blocksToDocxBuffer, lengthToTwips } from "../src/export/docx.ts";
 import { blocksToEpubBuffer } from "../src/export/epub.ts";
+import {
+  countWords,
+  formatPrintPages,
+  WORDS_PER_PAGE,
+  wordsToPages,
+} from "../src/stats.ts";
 import type { Block, TextRunModel } from "../src/export/text.ts";
 import { splitOnBreaks } from "../src/export/text.ts";
 
@@ -155,7 +161,36 @@ check(
   splitOnBreaks([plain("abc")]).length === 1,
 );
 
-if (failures > 0) {
-  throw new Error(`${failures} export test(s) failed`);
-}
+// --- Print pages (250 words = 1 standard page) ---
+check("pages: standard is 250 wpp", WORDS_PER_PAGE === 250);
+check("words: empty -> 0", countWords("") === 0);
+check(
+  "words: basic count",
+  countWords("It was a dark and stormy night.") === 7,
+);
+check(
+  "words: markdown syntax adds nothing",
+  countWords("# Chapter\n\nHello *world* — ok.") === 4,
+);
+check(
+  "words: frontmatter ignored",
+  countWords("---\ntitle: Foo\n---\nHello world") === 2,
+);
+check(
+  "words: fenced code ignored",
+  countWords("Hello\n```js\nconst a = 1;\n```\nworld") === 2,
+);
+check("pages: 0 words -> 0", wordsToPages(0) === 0);
+check("pages: 1 word -> 1", wordsToPages(1) === 1);
+check("pages: 250 words -> 1", wordsToPages(250) === 1);
+check("pages: 251 words -> 2", wordsToPages(251) === 2);
+check("pages: 500 words -> 2", wordsToPages(500) === 2);
+check("format: 0 -> 0 print pages", formatPrintPages(0) === "0 print pages");
+check("format: 1 -> singular", formatPrintPages(1) === "~1 print page");
+check(
+  "format: 48 -> plural",
+  formatPrintPages(48) === "~48 print pages",
+);
+
+if (failures > 0) throw new Error(`${failures} export test(s) failed`);
 console.log("ALL EXPORT TESTS PASS");

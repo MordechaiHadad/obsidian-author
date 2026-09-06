@@ -121,13 +121,9 @@ function extractRuns(
         strike: base.strike || tag === "DEL" || tag === "S",
         code: base.code || tag === "CODE",
       };
-      if (tag === "BR") {
-        runs.push({ ...base, text: "\n" });
-      } else if (tag === "IMG") {
-        continue; // Images are v1.1.
-      } else {
-        runs.push(...extractRuns(node, flags));
-      }
+      if (tag === "BR") runs.push({ ...base, text: "\n" });
+      else if (tag === "IMG") continue; // Images are v1.1.
+      else runs.push(...extractRuns(node, flags));
     }
   }
   return runs;
