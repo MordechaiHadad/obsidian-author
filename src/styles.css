@@ -1,11 +1,11 @@
 /* Obsidian Author — manuscript typography stylesheet.
  *
- * Activated per-note via the author-manuscript class. The plugin sets it on
- * the markdown leaf container (for the Live Preview editor) and directly on
- * the .markdown-preview-view element (for Reading view AND the PDF export,
- * which renders reading output into a separate container that drops outer
- * classes). Reading selectors therefore key off the preview element itself,
- * never its ancestors.
+ * Screen scoping uses the author-manuscript class on the leaf container and
+ * directly on .markdown-preview-view. PDF export re-renders into a separate
+ * print container that drops those outer classes, so the print path keys off
+ * the per-section author-pp marker added by the plugin's Markdown
+ * post-processor (content nodes the print render keeps) plus a dynamic
+ * `@media print` style element carrying the user's literal settings.
  *
  * Dynamic values arrive as CSS variables set by the plugin:
  *   --author-indent       first-line indent, e.g. 2em
@@ -40,19 +40,21 @@
   text-indent: var(--author-indent, 2em);
 }
 
-/* The first paragraph of the note never indents (manuscript convention). */
-.markdown-preview-view.author-manuscript.author-indent div.el-p:first-of-type p {
+/* The first paragraph of the note never indents (manuscript convention).
+ * First-child (not whole container): soft-break lines split into sibling
+ * <p> elements still count as separate paragraphs. */
+.markdown-preview-view.author-manuscript.author-indent div.el-p:first-of-type > p:first-child {
   text-indent: 0;
 }
 
 /* First paragraph after a heading or horizontal rule starts flush left. */
-.markdown-preview-view.author-manuscript.author-flush-after-heading h1 + div.el-p p,
-.markdown-preview-view.author-manuscript.author-flush-after-heading h2 + div.el-p p,
-.markdown-preview-view.author-manuscript.author-flush-after-heading h3 + div.el-p p,
-.markdown-preview-view.author-manuscript.author-flush-after-heading h4 + div.el-p p,
-.markdown-preview-view.author-manuscript.author-flush-after-heading h5 + div.el-p p,
-.markdown-preview-view.author-manuscript.author-flush-after-heading h6 + div.el-p p,
-.markdown-preview-view.author-manuscript.author-flush-after-heading hr + div.el-p p {
+.markdown-preview-view.author-manuscript.author-flush-after-heading h1 + div.el-p > p:first-child,
+.markdown-preview-view.author-manuscript.author-flush-after-heading h2 + div.el-p > p:first-child,
+.markdown-preview-view.author-manuscript.author-flush-after-heading h3 + div.el-p > p:first-child,
+.markdown-preview-view.author-manuscript.author-flush-after-heading h4 + div.el-p > p:first-child,
+.markdown-preview-view.author-manuscript.author-flush-after-heading h5 + div.el-p > p:first-child,
+.markdown-preview-view.author-manuscript.author-flush-after-heading h6 + div.el-p > p:first-child,
+.markdown-preview-view.author-manuscript.author-flush-after-heading hr + div.el-p > p:first-child {
   text-indent: 0;
 }
 
@@ -64,4 +66,74 @@
 .markdown-preview-view.author-manuscript.author-indent pre p,
 .markdown-preview-view.author-manuscript.author-indent .footnote p {
   text-indent: 0;
+}
+
+/* Post-processor marker (screen): same indent when leaf classes are absent.
+ * The plugin sets --author-indent/--author-line-height inline per section. */
+.author-pp p,
+p.author-pp {
+  margin-block-start: 0;
+  margin-block-end: 0;
+  line-height: var(--author-line-height, 1.7);
+  text-indent: var(--author-indent, 2em);
+}
+
+.author-pp-first > p:first-child {
+  text-indent: 0;
+}
+
+/* Flush after heading/rule only when the toggle is on: the plugin adds
+ * author-pp-flush per section in that case. */
+h1 + .author-pp-flush > p:first-child,
+h2 + .author-pp-flush > p:first-child,
+h3 + .author-pp-flush > p:first-child,
+h4 + .author-pp-flush > p:first-child,
+h5 + .author-pp-flush > p:first-child,
+h6 + .author-pp-flush > p:first-child,
+hr + .author-pp-flush > p:first-child {
+  text-indent: 0;
+}
+
+li.author-pp p,
+li .author-pp p,
+blockquote.author-pp p,
+blockquote .author-pp p,
+.callout .author-pp p,
+table .author-pp p,
+pre .author-pp p {
+  text-indent: 0;
+}
+
+/* Native Export to PDF: separate print container, theme print resets.
+ * Static fallback with defaults; the plugin injects a dynamic `@media
+ * print` style with the user's exact settings on top of this. */
+@media print {
+  .author-pp p,
+  p.author-pp {
+    text-indent: var(--author-indent, 2em) !important;
+    margin-block-start: 0 !important;
+    margin-block-end: 0 !important;
+    line-height: var(--author-line-height, 1.7) !important;
+  }
+
+  .author-pp-first > p:first-child,
+  h1 + .author-pp-flush > p:first-child,
+  h2 + .author-pp-flush > p:first-child,
+  h3 + .author-pp-flush > p:first-child,
+  h4 + .author-pp-flush > p:first-child,
+  h5 + .author-pp-flush > p:first-child,
+  h6 + .author-pp-flush > p:first-child,
+  hr + .author-pp-flush > p:first-child {
+    text-indent: 0 !important;
+  }
+
+  li.author-pp p,
+  li .author-pp p,
+  blockquote.author-pp p,
+  blockquote .author-pp p,
+  .callout .author-pp p,
+  table .author-pp p,
+  pre .author-pp p {
+    text-indent: 0 !important;
+  }
 }

@@ -14,6 +14,14 @@ import {
 import { blocksToDocxBuffer } from "./export/docx.ts";
 import { blocksToEpubBuffer } from "./export/epub.ts";
 import { noteToBlocks } from "./export/model.ts";
+import { noteToPdfBuffer } from "./export/print-pdf.ts";
+import { chooseSavePath, writeAbsoluteFile } from "./export/save-dialog.ts";
+import {
+  buildPrintCss,
+  isManuscriptPath,
+  markManuscriptSection,
+  normalizeFolder,
+} from "./scope.ts";
 import { countWords, formatPrintPages, wordsToPages } from "./stats.ts";
 
 interface AuthorSettings {
@@ -41,6 +49,11 @@ const CLASS_INDENT = "author-indent";
 const CLASS_FLUSH_AFTER_HEADING = "author-flush-after-heading";
 const VAR_INDENT = "--author-indent";
 const VAR_LINE_HEIGHT = "--author-line-height";
+// Id of the dynamic `@media print` style element injected into
+// document.head (carries the user's literal indent/line-height).
+const PRINT_STYLE_ID = "obsidian-author-print";
+
+
 
 export default class AuthorPlugin extends Plugin {
   declare settings: AuthorSettings;
@@ -67,6 +80,32 @@ export default class AuthorPlugin extends Plugin {
       callback: () => {
         void this.exportNote("epub");
       },
+    });
+    this.addCommand({
+      id: "export-note-pdf",
+      name: "Export current note to PDF (manuscript)",
+      callback: () => {
+        void this.exportNotePdf();
+      },
+    });
+
+    // Tag rendered sections of manuscript notes (Reading view). Note:
+    // native Export to PDF re-renders without post-processors, so it never
+    // sees these markers — manuscript PDF export clones a render we mark
+    // ourselves (see export/print-pdf.ts).
+    this.registerMarkdownPostProcessor((el, ctx) => {
+      if (!this.settings.enableIndent) return;
+      const src = ctx.sourcePath;
+      if (!src || !isManuscriptPath(src, this.normalizedFolder())) return;
+      // Manuscript convention: the very first paragraph of the note starts
+      // flush left. The first post-processed section belongs to the top of
+      // the note when it is a paragraph block.
+      const isFirst = el.matches("div.el-p") && !el.previousElementSibling;
+      markManuscriptSection(el, isFirst, {
+        indent: this.sanitizeIndent(this.settings.indentSize),
+        lineHeight: this.sanitizeLineHeight(this.settings.lineHeight),
+        flushAfterHeading: this.settings.removeIndentAfterHeading,
+      });
     });
 
     // Re-evaluate whenever the open note or vault contents may have changed.
@@ -124,6 +163,7 @@ export default class AuthorPlugin extends Plugin {
       globalThis.clearTimeout(this.statusTimer);
       this.statusTimer = null;
     }
+    document.getElementById(PRINT_STYLE_ID)?.remove();
     for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
       this.clearScope(leaf);
     }
@@ -141,8 +181,9 @@ export default class AuthorPlugin extends Plugin {
   }
 
   /** Toggle scope classes/values on every rendered reading view, matched to
-   * its leaf's file. This is what PDF export sees: it renders from reading
-   * output in a separate container that never gets leaf-container classes. */
+   * its leaf's file. Note: native Export to PDF does NOT reuse these nodes —
+   * it re-renders into a separate print container — so the PDF path is the
+   * post-processor marker (`author-pp`) plus `@media print` CSS instead. */
   private scopePreviewElements(): void {
     const s = this.settings;
     for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
@@ -212,18 +253,13 @@ export default class AuthorPlugin extends Plugin {
 
   /** Normalize "Novels/", "/Novels", " novels " -> "Novels". "" means disabled. */
   private normalizedFolder(): string {
-    return (this.settings.manuscriptFolder ?? "")
-      .trim()
-      .replace(/^\/+|\/+$/g, "")
-      .replace(/\/{2,}/g, "/");
+    return normalizeFolder(this.settings.manuscriptFolder);
   }
 
   /** True when file lives inside the manuscript folder (subfolders included). */
   isManuscriptFile(file: TFile | null | undefined): boolean {
     if (!file || file.extension !== "md") return false;
-    const folder = this.normalizedFolder();
-    if (!folder) return false;
-    return file.path.startsWith(folder + "/");
+    return isManuscriptPath(file.path, this.normalizedFolder());
   }
 
   /** Does the vault currently contain that folder? Used for the settings warning. */
@@ -267,6 +303,34 @@ export default class AuthorPlugin extends Plugin {
     if (!activeOn) this.statusEl?.setText("");
     else void this.updateStatusBar();
     this.scopePreviewElements();
+    this.ensurePrintStyle();
+  }
+
+  /** Inject (or refresh) a document-level `@media print` style carrying the
+   * user's literal indent/line-height. The static styles.css cannot know
+   * settings values, and the print render never copies leaf inline
+   * variables — so without this, PDF export falls back to theme defaults.
+   * No extra plugin or user snippet required. */
+  private ensurePrintStyle(): void {
+    const existing = document.getElementById(PRINT_STYLE_ID);
+    if (!this.settings.enableIndent) {
+      existing?.remove();
+      return;
+    }
+    const css = buildPrintCss(
+      this.sanitizeIndent(this.settings.indentSize),
+      this.sanitizeLineHeight(this.settings.lineHeight),
+      this.settings.removeIndentAfterHeading,
+    );
+    if (existing instanceof HTMLStyleElement) {
+      if (existing.textContent !== css) existing.textContent = css;
+      return;
+    }
+    existing?.remove();
+    const style = document.createElement("style");
+    style.id = PRINT_STYLE_ID;
+    style.textContent = css;
+    document.head.appendChild(style);
   }
 
   /** Debounced wrapper so fast typing re-reads at most ~3x/second. */
@@ -338,6 +402,30 @@ export default class AuthorPlugin extends Plugin {
     return DEFAULT_SETTINGS.lineHeight;
   }
 
+  /** Save an export buffer: Save dialog on desktop (user picks the path),
+   * vault-relative fallback on mobile. Returns the saved path, or null
+   * when the user cancelled. */
+  private async saveExportBuffer(
+    suggestedVaultPath: string,
+    filterName: string,
+    ext: string,
+    buffer: ArrayBuffer,
+  ): Promise<string | null> {
+    const choice = await chooseSavePath(this.app, suggestedVaultPath, [
+      { name: filterName, extensions: [ext] },
+    ]);
+    if (choice.kind === "cancelled") return null;
+    if (choice.kind === "chosen") {
+      await writeAbsoluteFile(choice.path, buffer);
+      return choice.path;
+    }
+    const existing = this.app.vault.getAbstractFileByPath(suggestedVaultPath);
+    if (existing instanceof TFile) {
+      await this.app.vault.modifyBinary(existing, buffer);
+    } else await this.app.vault.createBinary(suggestedVaultPath, buffer);
+    return suggestedVaultPath;
+  }
+
   /** Export the active Markdown note, preserving the first-line indent.
    * Re-exporting overwrites the previous file next to the note. */
   private async exportNote(format: "docx" | "epub"): Promise<void> {
@@ -369,15 +457,52 @@ export default class AuthorPlugin extends Plugin {
         ? `${file.parent.path}/`
         : "";
       const outPath = `${dir}${file.basename}.${ext}`;
-      const existing = this.app.vault.getAbstractFileByPath(outPath);
-      if (existing instanceof TFile) {
-        await this.app.vault.modifyBinary(existing, buffer);
-      } else await this.app.vault.createBinary(outPath, buffer);
-      new Notice(`Obsidian Author: exported ${outPath}.`);
+      const saved = await this.saveExportBuffer(
+        outPath,
+        format === "docx" ? "Word Document" : "EPUB e-book",
+        ext,
+        buffer,
+      );
+      if (saved) new Notice(`Obsidian Author: exported ${saved}.`);
     } catch (error) {
       console.error("[Obsidian Author] export failed:", error);
       new Notice(
         `Obsidian Author: export failed (${
+          error instanceof Error ? error.message : String(error)
+        }).`,
+      );
+    }
+  }
+
+  /** Export the active note to PDF with manuscript typography. Unlike native
+   * Export to PDF (which re-renders without post-processors and drops the
+   * indent for single-newline manuscripts), this prints a fully-marked
+   * render through a hidden Electron window. Works from any view mode.
+   * Re-exporting overwrites the previous file next to the note. */
+  private async exportNotePdf(): Promise<void> {
+    const file = this.app.workspace.getActiveFile();
+    if (!(file instanceof TFile) || file.extension !== "md") {
+      new Notice("Obsidian Author: open a Markdown note to export.");
+      return;
+    }
+    try {
+      new Notice("Obsidian Author: rendering manuscript PDF…");
+      const content = await this.app.vault.read(file);
+      const buffer = await noteToPdfBuffer(this.app, file, content, {
+        indent: this.sanitizeIndent(this.settings.indentSize),
+        lineHeight: this.sanitizeLineHeight(this.settings.lineHeight),
+        flushAfterHeading: this.settings.removeIndentAfterHeading,
+      });
+      const dir = file.parent && file.parent.path !== "/"
+        ? `${file.parent.path}/`
+        : "";
+      const outPath = `${dir}${file.basename}.pdf`;
+      const saved = await this.saveExportBuffer(outPath, "PDF", "pdf", buffer);
+      if (saved) new Notice(`Obsidian Author: exported ${saved}.`);
+    } catch (error) {
+      console.error("[Obsidian Author] PDF export failed:", error);
+      new Notice(
+        `Obsidian Author: PDF export failed (${
           error instanceof Error ? error.message : String(error)
         }).`,
       );

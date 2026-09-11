@@ -9,6 +9,12 @@ import {
 } from "../src/stats.ts";
 import type { Block, TextRunModel } from "../src/export/text.ts";
 import { splitOnBreaks } from "../src/export/text.ts";
+import {
+  buildPrintCss,
+  isManuscriptPath,
+  normalizeFolder,
+} from "../src/scope.ts";
+import { toAbsolutePath } from "../src/export/save-dialog.ts";
 
 const blocks: Block[] = [
   {
@@ -190,6 +196,67 @@ check("format: 1 -> singular", formatPrintPages(1) === "~1 print page");
 check(
   "format: 48 -> plural",
   formatPrintPages(48) === "~48 print pages",
+);
+
+// --- Manuscript scope + print CSS (PDF export path) ---
+check("scope: normalize slashes", normalizeFolder("/Novels/") === "Novels");
+check("scope: normalize empty", normalizeFolder("  ") === "");
+check(
+  "scope: note in folder",
+  isManuscriptPath("Manuscript/ch1.md", "Manuscript") === true,
+);
+check(
+  "scope: note in subfolder",
+  isManuscriptPath("Manuscript/act1/ch1.md", "Manuscript") === true,
+);
+check(
+  "scope: outside folder",
+  isManuscriptPath("Notes/ch1.md", "Manuscript") === false,
+);
+check(
+  "scope: non-md ignored",
+  isManuscriptPath("Manuscript/ch1.pdf", "Manuscript") === false,
+);
+check(
+  "scope: empty folder disabled",
+  isManuscriptPath("Manuscript/ch1.md", "") === false,
+);
+const printCss = buildPrintCss("2em", "1.7", true);
+check("print: @media print", printCss.includes("@media print"));
+check(
+  "print: literal indent !important",
+  printCss.includes("text-indent: 2em !important"),
+);
+check(
+  "print: literal line-height !important",
+  printCss.includes("line-height: 1.7 !important"),
+);
+check("print: marker class", printCss.includes(".author-pp p"));
+check(
+  "print: flush after heading",
+  printCss.includes("h1 + .author-pp-flush > p:first-child"),
+);
+check(
+  "print: first paragraph flush",
+  printCss.includes(".author-pp-first > p:first-child"),
+);
+check(
+  "print: no flush rules when disabled",
+  !buildPrintCss("2em", "1.7", false).includes(".author-pp-flush"),
+);
+
+// --- Save-dialog path join ---
+check(
+  "reveal: join base + vault path",
+  toAbsolutePath("/vault", "Manuscript/ch1.pdf") === "/vault/Manuscript/ch1.pdf",
+);
+check(
+  "reveal: trailing/leading slashes",
+  toAbsolutePath("/vault/", "/Manuscript/ch1.pdf") === "/vault/Manuscript/ch1.pdf",
+);
+check(
+  "reveal: empty vault path -> base",
+  toAbsolutePath("/vault", "") === "/vault",
 );
 
 if (failures > 0) throw new Error(`${failures} export test(s) failed`);
