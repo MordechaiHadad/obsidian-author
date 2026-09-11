@@ -129,16 +129,21 @@ export function isManuscriptPath(
  * The `author-pp` marker class is added per rendered section by a
  * `registerMarkdownPostProcessor` hook, which — unlike leaf-container
  * classes — lives on content nodes that the PDF print render keeps.
- * `!important` beats theme print resets. */
+ * `!important` beats theme print resets.
+ * NOTE: this and buildEpubCss are the single source of truth for
+ * generated CSS. styles.css (screen, CSS variables) must stay in sync
+ * with them by hand — it can't import from here. */
 export function buildPrintCss(
   indent: string,
   lineHeight: string,
   flushAfterHeading: boolean,
+  enableIndent = true,
 ): string {
+  const bodyIndent = enableIndent ? indent : "0";
   const lines = [
     "@media print {",
-    `  .author-pp p { text-indent: ${indent} !important; margin-block-start: 0 !important; margin-block-end: 0 !important; line-height: ${lineHeight} !important; }`,
-    `  p.author-pp { text-indent: ${indent} !important; }`,
+    `  .author-pp p { text-indent: ${bodyIndent} !important; margin-block-start: 0 !important; margin-block-end: 0 !important; line-height: ${lineHeight} !important; }`,
+    `  p.author-pp { text-indent: ${bodyIndent} !important; }`,
     flushAfterHeading
       ? `  .author-pp-first > p:first-child, h1 + .author-pp-flush > p:first-child, h2 + .author-pp-flush > p:first-child, h3 + .author-pp-flush > p:first-child, h4 + .author-pp-flush > p:first-child, h5 + .author-pp-flush > p:first-child, h6 + .author-pp-flush > p:first-child, hr + .author-pp-flush > p:first-child { text-indent: 0 !important; }`
       : `  .author-pp-first > p:first-child { text-indent: 0 !important; }`,
@@ -146,4 +151,28 @@ export function buildPrintCss(
     "}",
   ];
   return lines.join("\n");
+}
+
+/** Build the standalone EPUB stylesheet with literal values.
+ * Lives here (not epub.ts) so both generated stylesheets share one home:
+ * fix spacing/indent here once and every export target picks it up.
+ * Tight manuscript rhythm — the indent (not vertical gaps) separates
+ * paragraphs. !important + block-start/end + padding beat reader UA
+ * defaults (e.g. p { margin: 1em 0 }) that otherwise double-space
+ * single-newline source lines. */
+export function buildEpubCss(
+  indent: string,
+  lineHeight: string,
+  enableIndent = true,
+): string {
+  const bodyIndent = enableIndent ? indent : "0";
+  return [
+    `p { text-indent: ${bodyIndent} !important; margin: 0 !important; padding: 0; margin-block-start: 0 !important; margin-block-end: 0 !important; line-height: ${lineHeight}; }`,
+    `p.flush { text-indent: 0 !important; }`,
+    `.scene { text-indent: 0 !important; text-align: center; margin: 1em 0 !important; }`,
+    `h1, h2, h3, h4, h5, h6 { line-height: 1.3; margin: 1em 0 0.5em; font-weight: bold; }`,
+    `ol, ul { margin: 0; padding-left: 1.5em; }`,
+    `li { text-indent: 0; margin: 0; padding: 0; }`,
+    ``,
+  ].join("\n");
 }

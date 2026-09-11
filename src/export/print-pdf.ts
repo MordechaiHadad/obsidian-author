@@ -7,6 +7,7 @@ export interface ManuscriptPdfOptions {
   indent: string;
   lineHeight: string;
   flushAfterHeading: boolean;
+  enableIndent: boolean;
 }
 
 /** Minimal Electron surface we need. Acquired at runtime via Obsidian's
@@ -169,7 +170,12 @@ export async function noteToPdfBuffer(
     if (proseLength === 0) throw new Error("nothing to export in this note.");
     const css = collectDocumentCss() +
       "\n" +
-      buildPrintCss(opts.indent, opts.lineHeight, opts.flushAfterHeading) +
+      buildPrintCss(
+        opts.indent,
+        opts.lineHeight,
+        opts.flushAfterHeading,
+        opts.enableIndent,
+      ) +
       "\n" +
       VISIBILITY_OVERRIDES;
     const title = escapeHtml(file.basename);

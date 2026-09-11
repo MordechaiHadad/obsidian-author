@@ -10,6 +10,7 @@ import {
 import type { Block, TextRunModel } from "../src/export/text.ts";
 import { splitOnBreaks } from "../src/export/text.ts";
 import {
+  buildEpubCss,
   buildPrintCss,
   isManuscriptPath,
   normalizeFolder,
@@ -136,8 +137,103 @@ check(
 );
 check("epub: scene break", chapter.includes('<p class="scene">* * *</p>'));
 const css = await epubZip.file("OEBPS/style.css")?.async("string") ?? "";
-check("epub: css has 2em indent", css.includes("text-indent: 2em;"));
+check("epub: css has 2em indent", css.includes("text-indent: 2em !important;"));
+check(
+  "epub: indent survives reader defaults (!important like the margin reset)",
+  css.includes("p { text-indent: 2em !important;") &&
+    css.includes("p.flush { text-indent: 0 !important; }"),
+);
+check(
+  "epub: css resets reader paragraph gap (!important, no double spacing)",
+  css.includes("margin: 0 !important") &&
+    css.includes("margin-block-start: 0 !important") &&
+    css.includes("margin-block-end: 0 !important") &&
+    css.includes("padding: 0"),
+);
+check(
+  "epub: no fragile first-of-type flush rule",
+  !css.includes("first-of-type"),
+);
+check(
+  "epub: first body paragraph flush (manuscript convention)",
+  chapter.includes('<p class="flush">It was a '),
+);
+check(
+  "epub: second paragraph keeps indent",
+  chapter.includes("<p>Second paragraph here.</p>"),
+);
 check("epub: nav exists", !!epubZip.file("OEBPS/nav.xhtml"));
+
+// --- EPUB manuscript conventions: flush after heading/break, toggle ---
+const para = (text: string): Block => ({
+  kind: "paragraph",
+  runs: [{
+    text,
+    bold: false,
+    italic: false,
+    strike: false,
+    code: false,
+  }],
+});
+const headingBlock: Block = {
+  kind: "heading",
+  level: 1,
+  runs: [{
+    text: "Title",
+    bold: false,
+    italic: false,
+    strike: false,
+    code: false,
+  }],
+};
+const readChapter = async (bs: Block[], opts: Record<string, unknown>) => {
+  const buf = await blocksToEpubBuffer(bs, {
+    title: "T",
+    indent: "2em",
+    lineHeight: "1.7",
+    ...opts,
+  });
+  const zip = await JSZip.loadAsync(buf);
+  return {
+    chapter: await zip.file("OEBPS/chapter.xhtml")?.async("string") ?? "",
+    css: await zip.file("OEBPS/style.css")?.async("string") ?? "",
+  };
+};
+const afterHeading = await readChapter(
+  [headingBlock, para("First"), para("Second")],
+  { flushAfterHeading: true },
+);
+check(
+  "epub: paragraph after heading flush when toggle on",
+  afterHeading.chapter.includes("<h1>Title</h1>\n<p class=\"flush\">First</p>\n<p>Second</p>"),
+);
+const afterHeadingOff = await readChapter(
+  [para("Intro"), headingBlock, para("After"), para("Later")],
+  { flushAfterHeading: false },
+);
+check(
+  "epub: no flush after heading when toggle off (only first para flush)",
+  afterHeadingOff.chapter.includes(
+    '<p class="flush">Intro</p>\n<h1>Title</h1>\n<p>After</p>\n<p>Later</p>',
+  ),
+);
+const afterBreak = await readChapter(
+  [para("Before"), { kind: "break" }, para("After"), para("Later")],
+  { flushAfterHeading: true },
+);
+check(
+  "epub: paragraph after break flush when toggle on",
+  afterBreak.chapter.includes('<p class="scene">* * *</p>\n<p class="flush">After</p>\n<p>Later</p>'),
+);
+const noIndent = await readChapter([para("One"), para("Two")], {
+  enableIndent: false,
+});
+check(
+  "epub: toggle off removes all indents",
+  noIndent.css.includes("p { text-indent: 0 !important;") &&
+    noIndent.chapter.includes('<p class="flush">One</p>') &&
+    noIndent.chapter.includes('<p class="flush">Two</p>'),
+);
 
 // --- Pure units ---
 check("twips: 2em -> 480", lengthToTwips("2em") === 480);
@@ -243,6 +339,20 @@ check(
 check(
   "print: no flush rules when disabled",
   !buildPrintCss("2em", "1.7", false).includes(".author-pp-flush"),
+);
+check(
+  "print: toggle off removes indent (overrides styles.css fallback)",
+  buildPrintCss("2em", "1.7", true, false).includes(
+    ".author-pp p { text-indent: 0 !important;",
+  ) && !buildPrintCss("2em", "1.7", true, false).includes("text-indent: 2em"),
+);
+check(
+  "css: single source of truth (epub zip css === buildEpubCss)",
+  css === buildEpubCss("2em", "1.7", true),
+);
+check(
+  "css: buildEpubCss toggle off removes indent",
+  buildEpubCss("2em", "1.7", false).includes("p { text-indent: 0 !important;"),
 );
 
 // --- Save-dialog path join ---

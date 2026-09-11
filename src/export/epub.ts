@@ -1,4 +1,5 @@
 import JSZip from "jszip";
+import { buildEpubCss } from "../scope.ts";
 import type { Block, TextRunModel } from "./text.ts";
 
 export interface EpubOptions {
@@ -8,6 +9,10 @@ export interface EpubOptions {
   indent: string;
   /** Sanitized CSS line height, e.g. "1.7". */
   lineHeight: string;
+  /** When false, no first-line indent anywhere. Defaults to true. */
+  enableIndent?: boolean;
+  /** Flush-left paragraph after heading/break. Defaults to true. */
+  flushAfterHeading?: boolean;
 }
 
 function escapeXml(text: string): string {
@@ -31,17 +36,35 @@ function runsToXhtml(runs: TextRunModel[]): string {
     .join("");
 }
 
-function blocksToXhtml(blocks: Block[]): string {
+function blocksToXhtml(
+  blocks: Block[],
+  opts?: Pick<EpubOptions, "enableIndent" | "flushAfterHeading">,
+): string {
+  const enableIndent = opts?.enableIndent ?? true;
+  const flushAfterHeading = opts?.flushAfterHeading ?? true;
+  // Manuscript convention (mirrors DOCX indentedYet): the first body
+  // paragraph is flush left; headings/lists/breaks don't consume it.
+  let seenFirstParagraph = false;
+  let afterHeadingOrBreak = false;
   return blocks
     .map((block) => {
       switch (block.kind) {
         case "heading":
+          afterHeadingOrBreak = true;
           return `<h${block.level}>${
             runsToXhtml(block.runs)
           }</h${block.level}>`;
-        case "paragraph":
-          return `<p>${runsToXhtml(block.runs)}</p>`;
+        case "paragraph": {
+          const flush = !enableIndent || !seenFirstParagraph ||
+            (flushAfterHeading && afterHeadingOrBreak);
+          seenFirstParagraph = true;
+          afterHeadingOrBreak = false;
+          return flush
+            ? `<p class="flush">${runsToXhtml(block.runs)}</p>`
+            : `<p>${runsToXhtml(block.runs)}</p>`;
+        }
         case "list": {
+          afterHeadingOrBreak = false;
           const tag = block.ordered ? "ol" : "ul";
           const items = block.items
             .map((runs) => `<li>${runsToXhtml(runs)}</li>`)
@@ -49,29 +72,22 @@ function blocksToXhtml(blocks: Block[]): string {
           return `<${tag}>${items}</${tag}>`;
         }
         case "break":
+          afterHeadingOrBreak = true;
           return `<p class="scene">* * *</p>`;
       }
     })
     .join("\n");
 }
 
-function stylesheet(indent: string, lineHeight: string): string {
-  return [
-    `p { text-indent: ${indent}; margin: 0; line-height: ${lineHeight}; }`,
-    `body > p:first-of-type { text-indent: 0; }`,
-    `.scene { text-indent: 0; text-align: center; margin: 1em 0; }`,
-    `h1, h2, h3, h4, h5, h6 { line-height: 1.3; }`,
-    ``,
-  ].join("\n");
-}
-
-/** Build an EPUB3 buffer from blocks: one chapter, our own indent stylesheet. */
+/** Build an EPUB3 buffer from blocks: one chapter, our own indent stylesheet.
+ * The stylesheet comes from buildEpubCss() in scope.ts — the single source
+ * of truth for generated CSS shared with the print/PDF path. */
 export async function blocksToEpubBuffer(
   blocks: Block[],
   opts: EpubOptions,
 ): Promise<ArrayBuffer> {
   const title = escapeXml(opts.title);
-  const body = blocksToXhtml(blocks);
+  const body = blocksToXhtml(blocks, opts);
   const modified = new Date().toISOString().split(".")[0] + "Z";
 
   const container = `<?xml version="1.0" encoding="UTF-8"?>\n` +
@@ -117,7 +133,10 @@ export async function blocksToEpubBuffer(
   zip.file("OEBPS/content.opf", opf);
   zip.file("OEBPS/chapter.xhtml", chapter);
   zip.file("OEBPS/nav.xhtml", nav);
-  zip.file("OEBPS/style.css", stylesheet(opts.indent, opts.lineHeight));
+  zip.file(
+    "OEBPS/style.css",
+    buildEpubCss(opts.indent, opts.lineHeight, opts.enableIndent ?? true),
+  );
 
   const out = await zip.generateAsync({
     type: "uint8array",

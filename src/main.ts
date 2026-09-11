@@ -313,14 +313,14 @@ export default class AuthorPlugin extends Plugin {
    * No extra plugin or user snippet required. */
   private ensurePrintStyle(): void {
     const existing = document.getElementById(PRINT_STYLE_ID);
-    if (!this.settings.enableIndent) {
-      existing?.remove();
-      return;
-    }
+    // Always inject (even when the toggle is off): a zero-indent rule must
+    // override the static styles.css print fallback, otherwise OFF would
+    // still indent via its var() defaults.
     const css = buildPrintCss(
       this.sanitizeIndent(this.settings.indentSize),
       this.sanitizeLineHeight(this.settings.lineHeight),
       this.settings.removeIndentAfterHeading,
+      this.settings.enableIndent,
     );
     if (existing instanceof HTMLStyleElement) {
       if (existing.textContent !== css) existing.textContent = css;
@@ -452,6 +452,8 @@ export default class AuthorPlugin extends Plugin {
           title: file.basename,
           indent: this.sanitizeIndent(this.settings.indentSize),
           lineHeight: this.sanitizeLineHeight(this.settings.lineHeight),
+          enableIndent: this.settings.enableIndent,
+          flushAfterHeading: this.settings.removeIndentAfterHeading,
         });
       const dir = file.parent && file.parent.path !== "/"
         ? `${file.parent.path}/`
@@ -492,6 +494,7 @@ export default class AuthorPlugin extends Plugin {
         indent: this.sanitizeIndent(this.settings.indentSize),
         lineHeight: this.sanitizeLineHeight(this.settings.lineHeight),
         flushAfterHeading: this.settings.removeIndentAfterHeading,
+        enableIndent: this.settings.enableIndent,
       });
       const dir = file.parent && file.parent.path !== "/"
         ? `${file.parent.path}/`

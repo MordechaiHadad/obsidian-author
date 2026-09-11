@@ -1,5 +1,12 @@
-/* Obsidian Author — manuscript typography stylesheet.
+/* Obsidian Author — manuscript typography stylesheet (screen + static
+ * print fallback, CSS variables).
  *
+ * NOTE ON DUPLICATION: the literal-value stylesheets for isolated export
+ * targets live in src/scope.ts (buildPrintCss for PDF/print, buildEpubCss
+ * for EPUB) — that file is the single source of truth for generated CSS.
+ * This file can't import from there (Obsidian loads it as static CSS), so
+ * the manuscript values below (indent default, zero-gap rhythm, flush and
+ * no-indent selectors) must stay in sync with those builders by hand.
  * Screen scoping uses the author-manuscript class on the leaf container and
  * directly on .markdown-preview-view. PDF export re-renders into a separate
  * print container that drops those outer classes, so the print path keys off
