@@ -1,6 +1,8 @@
 import {
   AlignmentType,
   Document as DocxDocument,
+  DropCapType,
+  FrameAnchorType,
   HeadingLevel,
   LevelFormat,
   LineRuleType,
@@ -64,6 +66,7 @@ export async function blocksToDocxBuffer(
   blocks: Block[],
   indentSize: string,
   lineHeight: string,
+  enableDropCap = false,
 ): Promise<ArrayBuffer> {
   const firstLine = lengthToTwips(indentSize);
   const spacing = bodySpacing(lineHeight);
@@ -83,12 +86,27 @@ export async function blocksToDocxBuffer(
         break;
       }
       case "paragraph": {
+        const isFirstParagraph = !indentedYet;
         const indent = indentedYet ? firstLine : 0;
         indentedYet = true;
         children.push(
           new Paragraph({
             indent: { firstLine: indent },
             spacing,
+            frame: isFirstParagraph && enableDropCap
+              ? {
+                type: "absolute",
+                position: { x: 0, y: 0 },
+                width: 720,
+                height: 720,
+                anchor: {
+                  horizontal: FrameAnchorType.TEXT,
+                  vertical: FrameAnchorType.TEXT,
+                },
+                dropCap: DropCapType.DROP,
+                lines: 2,
+              }
+              : undefined,
             children: toTextRuns(block.runs),
           }),
         );

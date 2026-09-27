@@ -13,6 +13,8 @@ export interface EpubOptions {
   enableIndent?: boolean;
   /** Flush-left paragraph after heading/break. Defaults to true. */
   flushAfterHeading?: boolean;
+  /** Add a two-line drop cap to the first body paragraph. Defaults to false. */
+  enableDropCap?: boolean;
 }
 
 function escapeXml(text: string): string {
@@ -38,10 +40,14 @@ function runsToXhtml(runs: TextRunModel[]): string {
 
 function blocksToXhtml(
   blocks: Block[],
-  opts?: Pick<EpubOptions, "enableIndent" | "flushAfterHeading">,
+  opts?: Pick<
+    EpubOptions,
+    "enableIndent" | "flushAfterHeading" | "enableDropCap"
+  >,
 ): string {
   const enableIndent = opts?.enableIndent ?? true;
   const flushAfterHeading = opts?.flushAfterHeading ?? true;
+  const enableDropCap = opts?.enableDropCap ?? false;
   // Manuscript convention (mirrors DOCX indentedYet): the first body
   // paragraph is flush left; headings/lists/breaks don't consume it.
   let seenFirstParagraph = false;
@@ -55,12 +61,17 @@ function blocksToXhtml(
             runsToXhtml(block.runs)
           }</h${block.level}>`;
         case "paragraph": {
+          const isFirstParagraph = !seenFirstParagraph;
           const flush = !enableIndent || !seenFirstParagraph ||
             (flushAfterHeading && afterHeadingOrBreak);
           seenFirstParagraph = true;
           afterHeadingOrBreak = false;
-          return flush
-            ? `<p class="flush">${runsToXhtml(block.runs)}</p>`
+          const classes = [
+            flush && "flush",
+            enableDropCap && isFirstParagraph && "dropcap",
+          ].filter(Boolean).join(" ");
+          return classes
+            ? `<p class="${classes}">${runsToXhtml(block.runs)}</p>`
             : `<p>${runsToXhtml(block.runs)}</p>`;
         }
         case "list": {
@@ -135,7 +146,12 @@ export async function blocksToEpubBuffer(
   zip.file("OEBPS/nav.xhtml", nav);
   zip.file(
     "OEBPS/style.css",
-    buildEpubCss(opts.indent, opts.lineHeight, opts.enableIndent ?? true),
+    buildEpubCss(
+      opts.indent,
+      opts.lineHeight,
+      opts.enableIndent ?? true,
+      opts.enableDropCap ?? false,
+    ),
   );
 
   const out = await zip.generateAsync({

@@ -7,6 +7,8 @@
 export const PP_CLASS = "author-pp";
 /** First paragraph of the note: always flush left. */
 export const PP_FIRST_CLASS = "author-pp-first";
+/** Direct first-paragraph marker for isolated PDF renders. */
+export const PP_FIRST_PARAGRAPH_CLASS = "author-pp-first-paragraph";
 /** Added per section only when the flush-after-heading toggle is on. */
 export const PP_FLUSH_CLASS = "author-pp-flush";
 
@@ -107,10 +109,17 @@ export function markManuscriptRoot(
   let firstSeen = false;
   for (const child of Array.from(container.children)) {
     if (!(child instanceof HTMLElement)) continue;
-    const isFirst = !firstSeen && child.matches("div.el-p");
-    if (child.matches("div.el-p")) firstSeen = true;
+    const isParagraph = child.matches("div.el-p, p");
+    const isFirst = !firstSeen && isParagraph;
+    if (isParagraph) firstSeen = true;
     markManuscriptSection(child, isFirst, opts);
   }
+  // Also mark the actual prose paragraph, independently of whether the
+  // renderer wrapped it in a top-level `div.el-p` (isolated PDF renders can
+  // differ from Reading view's DOM structure).
+  const firstProseParagraph = Array.from(container.querySelectorAll("p"))
+    .find((p) => !p.closest("li, blockquote, table, pre, .callout, .footnote"));
+  firstProseParagraph?.classList.add(PP_FIRST_PARAGRAPH_CLASS);
 }
 
 /** True when a reading-view sibling is frontmatter/properties chrome rather
@@ -183,15 +192,19 @@ export function buildPrintCss(
   lineHeight: string,
   flushAfterHeading: boolean,
   enableIndent = true,
+  enableDropCap = false,
 ): string {
   const bodyIndent = enableIndent ? indent : "0";
   const lines = [
     "@media print {",
     `  .author-pp p { text-indent: ${bodyIndent} !important; margin-block-start: 0 !important; margin-block-end: 0 !important; line-height: ${lineHeight} !important; }`,
     `  p.author-pp { text-indent: ${bodyIndent} !important; }`,
+    enableDropCap
+      ? `  .author-pp-first > p:first-child::first-letter, .author-pp-first-paragraph::first-letter { float: left !important; font-size: 3em !important; line-height: 1 !important; padding-right: 0.1em !important; font-weight: 600 !important; }`
+      : "",
     flushAfterHeading
-      ? `  .author-pp-first > p:first-child, h1 + .author-pp-flush > p:first-child, h2 + .author-pp-flush > p:first-child, h3 + .author-pp-flush > p:first-child, h4 + .author-pp-flush > p:first-child, h5 + .author-pp-flush > p:first-child, h6 + .author-pp-flush > p:first-child, hr + .author-pp-flush > p:first-child { text-indent: 0 !important; }`
-      : `  .author-pp-first > p:first-child { text-indent: 0 !important; }`,
+      ? `  .author-pp-first > p:first-child, .author-pp p.author-pp-first-paragraph, h1 + .author-pp-flush > p:first-child, h2 + .author-pp-flush > p:first-child, h3 + .author-pp-flush > p:first-child, h4 + .author-pp-flush > p:first-child, h5 + .author-pp-flush > p:first-child, h6 + .author-pp-flush > p:first-child, hr + .author-pp-flush > p:first-child { text-indent: 0 !important; }`
+      : `  .author-pp-first > p:first-child, .author-pp p.author-pp-first-paragraph { text-indent: 0 !important; }`,
     `  li.author-pp p, li .author-pp p, blockquote.author-pp p, blockquote .author-pp p, table .author-pp p, pre .author-pp p { text-indent: 0 !important; }`,
     "}",
   ];
@@ -209,11 +222,17 @@ export function buildEpubCss(
   indent: string,
   lineHeight: string,
   enableIndent = true,
+  enableDropCap = false,
 ): string {
   const bodyIndent = enableIndent ? indent : "0";
   return [
     `p { text-indent: ${bodyIndent} !important; margin: 0 !important; padding: 0; margin-block-start: 0 !important; margin-block-end: 0 !important; line-height: ${lineHeight}; }`,
     `p.flush { text-indent: 0 !important; }`,
+    ...(enableDropCap
+      ? [
+        `p.dropcap::first-letter { float: left !important; font-size: 3em !important; line-height: 1 !important; padding-right: 0.1em !important; font-weight: 600 !important; }`,
+      ]
+      : []),
     `.scene { text-indent: 0 !important; text-align: center; margin: 1em 0 !important; }`,
     `h1, h2, h3, h4, h5, h6 { line-height: 1.3; margin: 1em 0 0.5em; font-weight: bold; }`,
     `ol, ul { margin: 0; padding-left: 1.5em; }`,

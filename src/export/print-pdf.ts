@@ -8,6 +8,7 @@ export interface ManuscriptPdfOptions {
   lineHeight: string;
   flushAfterHeading: boolean;
   enableIndent: boolean;
+  enableDropCap: boolean;
 }
 
 /** Minimal Electron surface we need. Acquired at runtime via Obsidian's
@@ -23,9 +24,11 @@ interface PrintWindow {
   isDestroyed(): boolean;
 }
 
-function getBrowserWindowCtor(): (new (
-  opts: Record<string, unknown>,
-) => PrintWindow) | null {
+function getBrowserWindowCtor():
+  | (new (
+    opts: Record<string, unknown>,
+  ) => PrintWindow)
+  | null {
   const w = window as unknown as Record<string, unknown>;
   const electron = w["electron"] as
     | { remote?: { BrowserWindow?: unknown } }
@@ -61,7 +64,9 @@ function collectDocumentCss(): string {
   const pushSheet = (sheet: CSSStyleSheet): void => {
     try {
       let text = "";
-      for (const rule of Array.from(sheet.cssRules)) text += rule.cssText + "\n";
+      for (const rule of Array.from(sheet.cssRules)) {
+        text += rule.cssText + "\n";
+      }
       if (text) parts.push(text);
     } catch {
       // Cross-origin / inaccessible sheet: skip.
@@ -71,7 +76,7 @@ function collectDocumentCss(): string {
   const adopted = (document as Document & {
     adoptedStyleSheets?: CSSStyleSheet[];
   }).adoptedStyleSheets;
-  if (Array.isArray(adopted)) for (const sheet of adopted) pushSheet(sheet);
+  if (Array.isArray(adopted)) { for (const sheet of adopted) pushSheet(sheet); }
   return parts.join("\n");
 }
 
@@ -89,8 +94,7 @@ async function inlineLocalImages(root: HTMLElement): Promise<void> {
       const dataUrl = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve(String(reader.result));
-        reader.onerror = () =>
-          reject(new Error("read failed"));
+        reader.onerror = () => reject(new Error("read failed"));
         reader.readAsDataURL(blob);
       });
       img.setAttribute("src", dataUrl);
@@ -151,7 +155,8 @@ export async function noteToPdfBuffer(
   }
   const stripped = content.replace(/^---\n[\s\S]*?\n---\n?/, "");
   const host = document.createElement("div");
-  host.style.cssText = "position:absolute;left:-100000px;top:0;pointer-events:none;";
+  host.style.cssText =
+    "position:absolute;left:-100000px;top:0;pointer-events:none;";
   document.body.appendChild(host);
   const component = new Component();
   component.load();
@@ -175,11 +180,13 @@ export async function noteToPdfBuffer(
         opts.lineHeight,
         opts.flushAfterHeading,
         opts.enableIndent,
+        opts.enableDropCap,
       ) +
       "\n" +
       VISIBILITY_OVERRIDES;
     const title = escapeHtml(file.basename);
-    const html = `<!DOCTYPE html>\n<html>\n<head>\n<meta charset="utf-8">\n<title>${title}</title>\n<style>\n${css}\n</style>\n</head>\n<body class="export-manuscript-document">\n<div class="markdown-preview-view markdown-rendered author-manuscript author-indent">${host.innerHTML}</div>\n</body>\n</html>`;
+    const html =
+      `<!DOCTYPE html>\n<html>\n<head>\n<meta charset="utf-8">\n<title>${title}</title>\n<style>\n${css}\n</style>\n</head>\n<body class="export-manuscript-document">\n<div class="markdown-preview-view markdown-rendered author-manuscript author-indent">${host.innerHTML}</div>\n</body>\n</html>`;
     // Data URL (not blob:): no cross-window ownership issues, debuggable.
     const pageUrl = "data:text/html;charset=utf-8," + encodeURIComponent(html);
     try {

@@ -370,6 +370,7 @@ export default class AuthorPlugin extends Plugin {
       this.sanitizeLineHeight(this.settings.lineHeight),
       this.settings.removeIndentAfterHeading,
       this.settings.enableIndent,
+      this.settings.enableDropCap,
     );
     if (existing instanceof HTMLStyleElement) {
       if (existing.textContent !== css) existing.textContent = css;
@@ -496,6 +497,7 @@ export default class AuthorPlugin extends Plugin {
           blocks,
           this.settings.indentSize,
           this.settings.lineHeight,
+          this.settings.enableDropCap,
         )
         : await blocksToEpubBuffer(blocks, {
           title: file.basename,
@@ -503,6 +505,7 @@ export default class AuthorPlugin extends Plugin {
           lineHeight: this.sanitizeLineHeight(this.settings.lineHeight),
           enableIndent: this.settings.enableIndent,
           flushAfterHeading: this.settings.removeIndentAfterHeading,
+          enableDropCap: this.settings.enableDropCap,
         });
       const dir = file.parent && file.parent.path !== "/"
         ? `${file.parent.path}/`
@@ -544,6 +547,7 @@ export default class AuthorPlugin extends Plugin {
         lineHeight: this.sanitizeLineHeight(this.settings.lineHeight),
         flushAfterHeading: this.settings.removeIndentAfterHeading,
         enableIndent: this.settings.enableIndent,
+        enableDropCap: this.settings.enableDropCap,
       });
       const dir = file.parent && file.parent.path !== "/"
         ? `${file.parent.path}/`
@@ -649,7 +653,7 @@ class AuthorSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Drop cap")
       .setDesc(
-        "Enlarge the first letter of the first paragraph (two lines tall) in Reading and Live Preview. Frontmatter is never affected.",
+        "Enlarge the first letter of the first paragraph (two lines tall) in Reading, Live Preview, and DOCX, EPUB, and manuscript PDF exports. Frontmatter is never affected.",
       )
       .addToggle((toggle) =>
         toggle

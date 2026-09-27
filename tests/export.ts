@@ -103,6 +103,15 @@ check("docx: heading style present", docXml.includes('w:val="Heading1"'));
 check("docx: bold run present", docXml.includes("<w:b/>"));
 check("docx: list numbering present", docXml.includes("<w:numPr>"));
 check("docx: scene break centered", docXml.includes("* * *"));
+const dropcapDocxBuf = await blocksToDocxBuffer(blocks, "2em", "1.7", true);
+const dropcapDocxZip = await JSZip.loadAsync(dropcapDocxBuf);
+const dropcapDocXml = await dropcapDocxZip.file("word/document.xml")
+  ?.async("string") ?? "";
+check(
+  "docx: two-line first-paragraph drop cap",
+  dropcapDocXml.includes('w:dropCap="drop"') &&
+    dropcapDocXml.includes('w:lines="2"'),
+);
 
 // --- EPUB ---
 const epubBuf = await blocksToEpubBuffer(blocks, {
@@ -199,13 +208,28 @@ const readChapter = async (bs: Block[], opts: Record<string, unknown>) => {
     css: await zip.file("OEBPS/style.css")?.async("string") ?? "",
   };
 };
+const dropcapEpub = await readChapter(
+  [para("Once upon a time"), para("Next")],
+  { enableDropCap: true },
+);
+check(
+  "epub: first paragraph gets drop cap class",
+  dropcapEpub.chapter.includes('<p class="flush dropcap">Once upon a time</p>'),
+);
+check(
+  "epub: drop cap styling spans two lines",
+  dropcapEpub.css.includes("p.dropcap::first-letter") &&
+    dropcapEpub.css.includes("font-size: 3em !important"),
+);
 const afterHeading = await readChapter(
   [headingBlock, para("First"), para("Second")],
   { flushAfterHeading: true },
 );
 check(
   "epub: paragraph after heading flush when toggle on",
-  afterHeading.chapter.includes("<h1>Title</h1>\n<p class=\"flush\">First</p>\n<p>Second</p>"),
+  afterHeading.chapter.includes(
+    '<h1>Title</h1>\n<p class="flush">First</p>\n<p>Second</p>',
+  ),
 );
 const afterHeadingOff = await readChapter(
   [para("Intro"), headingBlock, para("After"), para("Later")],
@@ -223,7 +247,9 @@ const afterBreak = await readChapter(
 );
 check(
   "epub: paragraph after break flush when toggle on",
-  afterBreak.chapter.includes('<p class="scene">* * *</p>\n<p class="flush">After</p>\n<p>Later</p>'),
+  afterBreak.chapter.includes(
+    '<p class="scene">* * *</p>\n<p class="flush">After</p>\n<p>Later</p>',
+  ),
 );
 const noIndent = await readChapter([para("One"), para("Two")], {
   enableIndent: false,
@@ -334,7 +360,8 @@ check(
 );
 check(
   "print: first paragraph flush",
-  printCss.includes(".author-pp-first > p:first-child"),
+  printCss.includes(".author-pp-first > p:first-child") &&
+    printCss.includes(".author-pp p.author-pp-first-paragraph"),
 );
 check(
   "print: no flush rules when disabled",
@@ -345,6 +372,12 @@ check(
   buildPrintCss("2em", "1.7", true, false).includes(
     ".author-pp p { text-indent: 0 !important;",
   ) && !buildPrintCss("2em", "1.7", true, false).includes("text-indent: 2em"),
+);
+check(
+  "print: optional two-line drop cap rule",
+  buildPrintCss("2em", "1.7", true, true, true).includes(
+    ".author-pp-first-paragraph::first-letter",
+  ) && !buildPrintCss("2em", "1.7", true).includes("::first-letter"),
 );
 check(
   "css: single source of truth (epub zip css === buildEpubCss)",
@@ -358,11 +391,13 @@ check(
 // --- Save-dialog path join ---
 check(
   "reveal: join base + vault path",
-  toAbsolutePath("/vault", "Manuscript/ch1.pdf") === "/vault/Manuscript/ch1.pdf",
+  toAbsolutePath("/vault", "Manuscript/ch1.pdf") ===
+    "/vault/Manuscript/ch1.pdf",
 );
 check(
   "reveal: trailing/leading slashes",
-  toAbsolutePath("/vault/", "/Manuscript/ch1.pdf") === "/vault/Manuscript/ch1.pdf",
+  toAbsolutePath("/vault/", "/Manuscript/ch1.pdf") ===
+    "/vault/Manuscript/ch1.pdf",
 );
 check(
   "reveal: empty vault path -> base",
