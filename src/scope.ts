@@ -113,6 +113,51 @@ export function markManuscriptRoot(
   }
 }
 
+/** True when a reading-view sibling is frontmatter/properties chrome rather
+ * than content. The Markdown post-processor only sees content sections, but
+ * the first `div.el-p` can have such a node as `previousElementSibling`
+ * when the note has frontmatter — it must still count as "first". */
+export function isFrontmatterContainer(el: Element | null): boolean {
+  if (!(el instanceof HTMLElement)) return false;
+  const cls = Array.from(el.classList).join(" ").toLowerCase();
+  return cls.includes("frontmatter") || cls.includes("metadata") ||
+    cls.includes("yaml") || cls.includes("properties");
+}
+
+/** True when `el` is the first paragraph section of the note: a `div.el-p`
+ * with no previous paragraph/heading/rule/list/quote/table/pre sibling.
+ * Frontmatter/properties containers are skipped. */
+export function isFirstParagraphSection(el: HTMLElement): boolean {
+  if (!el.matches("div.el-p")) return false;
+  let sib: Element | null = el.previousElementSibling;
+  while (sib) {
+    if (isFrontmatterContainer(sib)) {
+      sib = sib.previousElementSibling;
+      continue;
+    }
+    // Any other rendered sibling means we are not the first section.
+    // (Headings/rules before the first paragraph don't consume the
+    // manuscript "first paragraph flush" — markManuscriptRoot handles that
+    // case separately — but in the streaming post-processor the safest
+    // signal for "top of note" is no previous content sibling at all.)
+    return false;
+  }
+  return true;
+}
+
+/** Reconcile first-paragraph markers within one rendered Reading view.
+ * The Markdown post-processor can fire while `el` is still detached (bulk
+ * render), so `isFirstParagraphSection` may mark several `div.el-p` as
+ * first. The rendered document order is authoritative: keep the marker on
+ * the first match, drop it from the rest. Idempotent. */
+export function reconcileFirstParagraphMarkers(preview: HTMLElement): void {
+  const marked = Array.from(
+    preview.querySelectorAll(`div.el-p.${PP_FIRST_CLASS}`),
+  );
+  for (const el of marked.slice(1)) {
+    if (el instanceof HTMLElement) el.classList.remove(PP_FIRST_CLASS);
+  }
+}
 /** True when a vault-relative path is a Markdown note inside the folder.
  * Subfolders included. `folder` must already be normalized (may be ""). */
 export function isManuscriptPath(

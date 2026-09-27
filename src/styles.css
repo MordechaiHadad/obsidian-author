@@ -36,21 +36,25 @@
 
 /* Live Preview (CM6): one .cm-line per visual line. Only plain paragraph
  * lines are styled; HyperMD classes mark headings, lists, code, hr, tables,
- * frontmatter and math. Lines without any HyperMD class match as well. */
-.author-manuscript .cm-content .cm-line:not(.HyperMD-header):not(.HyperMD-list-line):not(.HyperMD-codeblock):not(.HyperMD-hr):not(.HyperMD-table-row):not(.HyperMD-frontmatter):not(.HyperMD-math) {
+ * frontmatter and math. Lines without any HyperMD class match as well.
+ * Scoped to .is-live-preview: raw Source mode gets no manuscript styling. */
+.author-manuscript .is-live-preview .cm-content .cm-line:not(.HyperMD-header):not(.HyperMD-list-line):not(.HyperMD-codeblock):not(.HyperMD-hr):not(.HyperMD-table-row):not(.HyperMD-frontmatter):not(.HyperMD-math) {
   line-height: var(--author-line-height, 1.7);
 }
 
 /* Classic manuscript first-line indent. */
 .markdown-preview-view.author-manuscript.author-indent p,
-.author-manuscript.author-indent .cm-content .cm-line:not(.HyperMD-header):not(.HyperMD-list-line):not(.HyperMD-codeblock):not(.HyperMD-hr):not(.HyperMD-table-row):not(.HyperMD-frontmatter):not(.HyperMD-math) {
+.author-manuscript.author-indent .is-live-preview .cm-content .cm-line:not(.HyperMD-header):not(.HyperMD-list-line):not(.HyperMD-codeblock):not(.HyperMD-hr):not(.HyperMD-table-row):not(.HyperMD-frontmatter):not(.HyperMD-math):not(.author-dropcap-line) {
   text-indent: var(--author-indent, 2em);
 }
 
 /* The first paragraph of the note never indents (manuscript convention).
- * First-child (not whole container): soft-break lines split into sibling
- * <p> elements still count as separate paragraphs. */
-.markdown-preview-view.author-manuscript.author-indent div.el-p:first-of-type > p:first-child {
+ * :first-of-type fails when a frontmatter div (el-pre) precedes the first
+ * el-p — both are divs — so the author-pp-first marker (frontmatter-aware,
+ * see isFirstParagraphSection) is the primary signal. Its selector must
+ * beat the (0,3,1) indent rule above, hence the full leaf-scoped variant. */
+.markdown-preview-view.author-manuscript.author-indent div.el-p:first-of-type > p:first-child,
+.markdown-preview-view.author-manuscript.author-indent div.el-p.author-pp-first > p:first-child {
   text-indent: 0;
 }
 
@@ -63,6 +67,41 @@
 .markdown-preview-view.author-manuscript.author-flush-after-heading h6 + div.el-p > p:first-child,
 .markdown-preview-view.author-manuscript.author-flush-after-heading hr + div.el-p > p:first-child {
   text-indent: 0;
+}
+
+/* Drop cap: first paragraph of the note only (2 lines tall). Reading view
+ * keys off the post-processor marker (author-pp-first, frontmatter-aware)
+ * plus a :first-of-type fallback. Frontmatter containers never match
+ * div.el-p, so the cap can't land on frontmatter. Gated on
+ * .author-dropcap (settings toggle). True float here: Reading
+ * paragraphs are real <p> blocks with no cursor-coordinate layer. */
+.markdown-preview-view.author-manuscript.author-dropcap div.el-p.author-pp-first > p:first-child::first-letter,
+.markdown-preview-view.author-manuscript.author-dropcap.author-indent div.el-p:first-of-type > p:first-child::first-letter {
+  float: left;
+  font-size: 3em;
+  line-height: 1;
+  padding-right: 0.1em;
+  font-weight: 600;
+}
+
+/* Drop cap: Live Preview (CM6). A state-driven editor extension
+ * (src/dropcap.ts) tags the first plain prose .cm-line with
+ * .author-dropcap-line (frontmatter/headings/lists/code skipped), so this
+ * never matches frontmatter. The base indent rule excludes this marker, so
+ * its text stays flush even when the drop-cap setting is off. */
+.author-manuscript.author-indent .is-live-preview .cm-content .cm-line.author-dropcap-line {
+  text-indent: 0;
+}
+/* Live cap is floated so the following prose wraps beside it for two
+ * complete lines. The earlier class-mutation observer that caused vim
+ * jitter is gone; author-dropcap-line is now a CM6 state decoration, so this
+ * float does not fight CodeMirror's DOM updates. */
+.author-manuscript.author-dropcap .is-live-preview .cm-content .cm-line.author-dropcap-line::first-letter {
+  font-size: 3em;
+  float: left;
+  line-height: 1;
+  padding-right: 0.1em;
+  font-weight: 600;
 }
 
 /* Structural blocks never indent. */
@@ -86,6 +125,12 @@ p.author-pp {
 }
 
 .author-pp-first > p:first-child {
+  text-indent: 0;
+}
+
+/* Same flush for the leaf-scoped path: beats the (0,3,1) indent rule even
+ * when a frontmatter div precedes the first paragraph. */
+.markdown-preview-view.author-manuscript div.el-p.author-pp-first > p:first-child {
   text-indent: 0;
 }
 

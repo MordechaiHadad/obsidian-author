@@ -18,10 +18,14 @@ import { noteToPdfBuffer } from "./export/print-pdf.ts";
 import { chooseSavePath, writeAbsoluteFile } from "./export/save-dialog.ts";
 import {
   buildPrintCss,
+  isFirstParagraphSection,
+  isFrontmatterContainer,
   isManuscriptPath,
   markManuscriptSection,
   normalizeFolder,
+  reconcileFirstParagraphMarkers,
 } from "./scope.ts";
+import { dropcapExtension, setDropcapFolder } from "./dropcap.ts";
 import { countWords, formatPrintPages, wordsToPages } from "./stats.ts";
 
 interface AuthorSettings {
@@ -30,6 +34,7 @@ interface AuthorSettings {
   indentSize: string;
   removeIndentAfterHeading: boolean;
   lineHeight: string;
+  enableDropCap: boolean;
 }
 
 const DEFAULT_SETTINGS: AuthorSettings = {
@@ -38,6 +43,7 @@ const DEFAULT_SETTINGS: AuthorSettings = {
   indentSize: "2em",
   removeIndentAfterHeading: true,
   lineHeight: "1.7",
+  enableDropCap: true,
 };
 
 // Scope class + CSS variables consumed by styles.css. Applied per markdown
@@ -47,13 +53,12 @@ const DEFAULT_SETTINGS: AuthorSettings = {
 const SCOPE_CLASS = "author-manuscript";
 const CLASS_INDENT = "author-indent";
 const CLASS_FLUSH_AFTER_HEADING = "author-flush-after-heading";
+const CLASS_DROPCAP = "author-dropcap";
 const VAR_INDENT = "--author-indent";
 const VAR_LINE_HEIGHT = "--author-line-height";
 // Id of the dynamic `@media print` style element injected into
 // document.head (carries the user's literal indent/line-height).
 const PRINT_STYLE_ID = "obsidian-author-print";
-
-
 
 export default class AuthorPlugin extends Plugin {
   declare settings: AuthorSettings;
@@ -61,10 +66,15 @@ export default class AuthorPlugin extends Plugin {
   private previewObserver: MutationObserver | null = null;
   private previewScopeQueued = false;
   private statusTimer: ReturnType<typeof setTimeout> | null = null;
+  private editorOptionsTimer: ReturnType<typeof setTimeout> | null = null;
 
   override async onload() {
     await this.loadSettings();
+    setDropcapFolder(this.normalizedFolder());
     this.addSettingTab(new AuthorSettingTab(this.app, this));
+    // Live Preview drop cap as a CodeMirror extension (state decoration —
+    // survives editor transactions, no DOM fighting, vim-safe).
+    this.registerEditorExtension(dropcapExtension);
     // Status indicator: visible proof of manuscript scope for the active note.
     this.statusEl = this.addStatusBarItem();
     this.addCommand({
@@ -88,7 +98,6 @@ export default class AuthorPlugin extends Plugin {
         void this.exportNotePdf();
       },
     });
-
     // Tag rendered sections of manuscript notes (Reading view). Note:
     // native Export to PDF re-renders without post-processors, so it never
     // sees these markers — manuscript PDF export clones a render we mark
@@ -97,10 +106,13 @@ export default class AuthorPlugin extends Plugin {
       if (!this.settings.enableIndent) return;
       const src = ctx.sourcePath;
       if (!src || !isManuscriptPath(src, this.normalizedFolder())) return;
+      // Never mark frontmatter/properties containers (display:none, but
+      // keep the marker strictly for content sections).
+      if (isFrontmatterContainer(el)) return;
       // Manuscript convention: the very first paragraph of the note starts
-      // flush left. The first post-processed section belongs to the top of
-      // the note when it is a paragraph block.
-      const isFirst = el.matches("div.el-p") && !el.previousElementSibling;
+      // flush left. Frontmatter/properties containers before it don't
+      // consume "first" (see isFirstParagraphSection).
+      const isFirst = isFirstParagraphSection(el);
       markManuscriptSection(el, isFirst, {
         indent: this.sanitizeIndent(this.settings.indentSize),
         lineHeight: this.sanitizeLineHeight(this.settings.lineHeight),
@@ -118,6 +130,15 @@ export default class AuthorPlugin extends Plugin {
     this.registerEvent(this.app.vault.on("rename", () => this.refresh()));
     this.registerEvent(this.app.vault.on("create", () => this.refresh()));
     this.registerEvent(this.app.vault.on("delete", () => this.refresh()));
+    // Mode switches (source <-> live <-> reading) rebuild the view without
+    // an editor-change: re-scope reading views on any layout change
+    // (rAF-throttled, no-op when nothing changed). Live Preview needs no
+    // hook: the drop-cap editor extension is state-driven.
+    this.registerEvent(
+      this.app.workspace.on("layout-change", () => {
+        this.queuePreviewScope();
+      }),
+    );
     // Live print-page count: recompute (debounced) as the active note is
     // edited, including edits made from another device / outside the editor.
     this.registerEvent(
@@ -132,7 +153,9 @@ export default class AuthorPlugin extends Plugin {
     );
 
     // Reading-view elements render asynchronously after their leaf opens.
-    // Watch for them and scope them when they appear.
+    // Watch for them and scope them when they appear. ChildList only: the
+    // Live Preview drop cap is a state-driven editor extension, so nothing
+    // here may touch .cm-line classes (that fight shook the buffer).
     this.previewObserver = new MutationObserver((mutations) => {
       for (const mutation of mutations) {
         for (const node of Array.from(mutation.addedNodes)) {
@@ -163,6 +186,10 @@ export default class AuthorPlugin extends Plugin {
       globalThis.clearTimeout(this.statusTimer);
       this.statusTimer = null;
     }
+    if (this.editorOptionsTimer !== null) {
+      globalThis.clearTimeout(this.editorOptionsTimer);
+      this.editorOptionsTimer = null;
+    }
     document.getElementById(PRINT_STYLE_ID)?.remove();
     for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
       this.clearScope(leaf);
@@ -178,6 +205,19 @@ export default class AuthorPlugin extends Plugin {
       this.previewScopeQueued = false;
       this.scopePreviewElements();
     });
+  }
+
+  /** Reconfigure editor extensions after the manuscript folder changes.
+   * Folder input saves on each keystroke, so debounce to one refresh after
+   * typing settles rather than rebuilding every open editor repeatedly. */
+  private scheduleEditorOptionsRefresh(): void {
+    if (this.editorOptionsTimer !== null) {
+      globalThis.clearTimeout(this.editorOptionsTimer);
+    }
+    this.editorOptionsTimer = globalThis.setTimeout(() => {
+      this.editorOptionsTimer = null;
+      this.app.workspace.updateOptions();
+    }, 250);
   }
 
   /** Toggle scope classes/values on every rendered reading view, matched to
@@ -201,6 +241,7 @@ export default class AuthorPlugin extends Plugin {
         CLASS_FLUSH_AFTER_HEADING,
         inScope && s.enableIndent && s.removeIndentAfterHeading,
       );
+      preview.classList.toggle(CLASS_DROPCAP, inScope && s.enableDropCap);
       if (inScope) {
         preview.style.setProperty(
           VAR_INDENT,
@@ -210,6 +251,9 @@ export default class AuthorPlugin extends Plugin {
           VAR_LINE_HEIGHT,
           this.sanitizeLineHeight(s.lineHeight),
         );
+        // Bulk renders can mark several sections as "first" (post-processor
+        // fires while nodes are detached); document order decides.
+        reconcileFirstParagraphMarkers(preview);
       } else {
         preview.style.removeProperty(VAR_INDENT);
         preview.style.removeProperty(VAR_LINE_HEIGHT);
@@ -230,6 +274,7 @@ export default class AuthorPlugin extends Plugin {
         SCOPE_CLASS,
         CLASS_INDENT,
         CLASS_FLUSH_AFTER_HEADING,
+        CLASS_DROPCAP,
       );
       el.style.removeProperty(VAR_INDENT);
       el.style.removeProperty(VAR_LINE_HEIGHT);
@@ -274,6 +319,9 @@ export default class AuthorPlugin extends Plugin {
    * All actual styling lives in styles.css; here we only pass values. */
   refresh() {
     const s = this.settings;
+    if (setDropcapFolder(this.normalizedFolder())) {
+      this.scheduleEditorOptionsRefresh();
+    }
     for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
       const view = leaf.view;
       if (!(view instanceof MarkdownView)) continue;
@@ -286,6 +334,7 @@ export default class AuthorPlugin extends Plugin {
         CLASS_FLUSH_AFTER_HEADING,
         inScope && s.enableIndent && s.removeIndentAfterHeading,
       );
+      el.classList.toggle(CLASS_DROPCAP, inScope && s.enableDropCap);
       if (inScope) {
         el.style.setProperty(VAR_INDENT, this.sanitizeIndent(s.indentSize));
         el.style.setProperty(
@@ -593,6 +642,20 @@ class AuthorSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.removeIndentAfterHeading)
           .onChange(async (value) => {
             this.plugin.settings.removeIndentAfterHeading = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Drop cap")
+      .setDesc(
+        "Enlarge the first letter of the first paragraph (two lines tall) in Reading and Live Preview. Frontmatter is never affected.",
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.enableDropCap)
+          .onChange(async (value) => {
+            this.plugin.settings.enableDropCap = value;
             await this.plugin.saveSettings();
           })
       );
