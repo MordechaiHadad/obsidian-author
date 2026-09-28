@@ -178,6 +178,27 @@ export function isManuscriptPath(
   return filePath.startsWith(folder + "/");
 }
 
+/** Flush-left selectors for the first paragraph of the note. The manuscript
+ * marker can land either on a wrapper section (Reading view: `div.el-p
+ * .author-pp-first > p`) or — as the isolated PDF render does — on the
+ * `<p>` itself. Both shapes must match: the drop cap already has a
+ * marker-on-the-paragraph selector, so without one here the cap renders
+ * while `text-indent` keeps its first line indented. */
+const FIRST_FLUSH_SELECTORS = [
+  ".author-pp-first > p:first-child",
+  "p.author-pp-first",
+  ".author-pp p.author-pp-first-paragraph",
+  "p.author-pp-first-paragraph",
+].join(", ");
+
+/** Same two shapes for the paragraph after a heading/rule: the marker is
+ * either the wrapper the heading is a sibling of, or the `<p>` itself. */
+const HEADING_FLUSH_SELECTORS = ["h1", "h2", "h3", "h4", "h5", "h6", "hr"]
+  .map((tag) =>
+    `${tag} + .author-pp-flush > p:first-child, ${tag} + p.author-pp-flush`
+  )
+  .join(", ");
+
 /** Build a self-contained `@media print` stylesheet with literal values
  * (no CSS variables, no dependency on JS-added leaf classes).
  * The `author-pp` marker class is added per rendered section by a
@@ -203,8 +224,8 @@ export function buildPrintCss(
       ? `  .author-pp-first > p:first-child::first-letter, .author-pp-first-paragraph::first-letter { float: left !important; font-size: 3em !important; line-height: 1 !important; padding-right: 0.1em !important; font-weight: 600 !important; }`
       : "",
     flushAfterHeading
-      ? `  .author-pp-first > p:first-child, .author-pp p.author-pp-first-paragraph, h1 + .author-pp-flush > p:first-child, h2 + .author-pp-flush > p:first-child, h3 + .author-pp-flush > p:first-child, h4 + .author-pp-flush > p:first-child, h5 + .author-pp-flush > p:first-child, h6 + .author-pp-flush > p:first-child, hr + .author-pp-flush > p:first-child { text-indent: 0 !important; }`
-      : `  .author-pp-first > p:first-child, .author-pp p.author-pp-first-paragraph { text-indent: 0 !important; }`,
+      ? `  ${FIRST_FLUSH_SELECTORS}, ${HEADING_FLUSH_SELECTORS} { text-indent: 0 !important; }`
+      : `  ${FIRST_FLUSH_SELECTORS} { text-indent: 0 !important; }`,
     `  li.author-pp p, li .author-pp p, blockquote.author-pp p, blockquote .author-pp p, table .author-pp p, pre .author-pp p { text-indent: 0 !important; }`,
     "}",
   ];

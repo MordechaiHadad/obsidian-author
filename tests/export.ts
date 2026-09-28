@@ -379,6 +379,32 @@ check(
     ".author-pp-first-paragraph::first-letter",
   ) && !buildPrintCss("2em", "1.7", true).includes("::first-letter"),
 );
+// The isolated PDF render can put the manuscript marker on the <p> itself
+// instead of a wrapper section. The drop-cap rule already matches that
+// shape, so the flush rule must too — otherwise the cap renders while its
+// first line keeps the 2em indent from `p.author-pp`.
+const firstFlush = [
+  ".author-pp-first > p:first-child",
+  "p.author-pp-first",
+  ".author-pp p.author-pp-first-paragraph",
+  "p.author-pp-first-paragraph",
+].join(", ");
+check(
+  "print: first paragraph flushes when the marker sits on the <p> itself",
+  printCss.includes(firstFlush) &&
+    buildPrintCss("2em", "1.7", false, true, true).includes(firstFlush),
+);
+check(
+  "print: flush rule outranks the indent rule by source order (same specificity)",
+  printCss.indexOf(firstFlush) >
+      printCss.indexOf("p.author-pp { text-indent: 2em !important; }") &&
+    printCss.indexOf(firstFlush) !== -1,
+);
+check(
+  "print: flush after heading covers a top-level <p> section",
+  printCss.includes("h1 + p.author-pp-flush") &&
+    printCss.includes("hr + p.author-pp-flush"),
+);
 check(
   "css: single source of truth (epub zip css === buildEpubCss)",
   css === buildEpubCss("2em", "1.7", true),
@@ -402,6 +428,32 @@ check(
 check(
   "reveal: empty vault path -> base",
   toAbsolutePath("/vault", "") === "/vault",
+);
+
+// --- Live Preview: the first line of the file must stay flush ---
+// The CM6 marker (src/dropcap.ts) is scoped to the manuscript folder only —
+// never to the drop-cap toggle — so this holds with the cap on or off.
+const screenCss = await Deno.readTextFile(
+  new URL("../src/styles.css", import.meta.url),
+);
+const dropcapSource = await Deno.readTextFile(
+  new URL("../src/dropcap.ts", import.meta.url),
+);
+check(
+  "dropcap: live preview first-line marker ignores the drop-cap toggle",
+  !dropcapSource.includes("enableDropCap"),
+);
+check(
+  "styles: live preview indent skips the first-line marker",
+  /:not\(\.author-dropcap-line\)/.test(screenCss),
+);
+check(
+  "styles: live preview first-line marker is forced to indent 0",
+  /\.author-dropcap-line\s*\{\s*text-indent:\s*0;\s*\}/.test(screenCss),
+);
+check(
+  "styles: live preview indent skips quote/callout lines (Reading view flushes them)",
+  /:not\(\.HyperMD-quote\)/.test(screenCss),
 );
 
 if (failures > 0) throw new Error(`${failures} export test(s) failed`);

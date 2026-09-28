@@ -36,15 +36,20 @@
 
 /* Live Preview (CM6): one .cm-line per visual line. Only plain paragraph
  * lines are styled; HyperMD classes mark headings, lists, code, hr, tables,
- * frontmatter and math. Lines without any HyperMD class match as well.
- * Scoped to .is-live-preview: raw Source mode gets no manuscript styling. */
+ * frontmatter, quotes and math. Lines without any HyperMD class match as
+ * well. Scoped to .is-live-preview: raw Source mode gets no manuscript
+ * styling. */
 .author-manuscript .is-live-preview .cm-content .cm-line:not(.HyperMD-header):not(.HyperMD-list-line):not(.HyperMD-codeblock):not(.HyperMD-hr):not(.HyperMD-table-row):not(.HyperMD-frontmatter):not(.HyperMD-math) {
   line-height: var(--author-line-height, 1.7);
 }
 
-/* Classic manuscript first-line indent. */
+/* Classic manuscript first-line indent. Quote/callout lines are excluded:
+ * Reading view flushes every blockquote/callout paragraph (see the
+ * structural rules below), so Live Preview must not indent them either —
+ * otherwise a note that *starts* with a callout opens with an indented
+ * first line. */
 .markdown-preview-view.author-manuscript.author-indent p,
-.author-manuscript.author-indent .is-live-preview .cm-content .cm-line:not(.HyperMD-header):not(.HyperMD-list-line):not(.HyperMD-codeblock):not(.HyperMD-hr):not(.HyperMD-table-row):not(.HyperMD-frontmatter):not(.HyperMD-math):not(.author-dropcap-line) {
+.author-manuscript.author-indent .is-live-preview .cm-content .cm-line:not(.HyperMD-header):not(.HyperMD-list-line):not(.HyperMD-codeblock):not(.HyperMD-hr):not(.HyperMD-table-row):not(.HyperMD-frontmatter):not(.HyperMD-math):not(.HyperMD-quote):not(.author-dropcap-line) {
   text-indent: var(--author-indent, 2em);
 }
 
@@ -168,14 +173,28 @@ pre .author-pp p {
     line-height: var(--author-line-height, 1.7) !important;
   }
 
+  /* First paragraph of the note (and the drop-cap paragraph) is flush.
+   * The marker can sit on the wrapper section or — in isolated PDF renders
+   * — on the `<p>` itself, so both shapes are listed, mirroring
+   * buildPrintCss (src/scope.ts). */
   .author-pp-first > p:first-child,
+  p.author-pp-first,
+  .author-pp p.author-pp-first-paragraph,
+  p.author-pp-first-paragraph,
   h1 + .author-pp-flush > p:first-child,
+  h1 + p.author-pp-flush,
   h2 + .author-pp-flush > p:first-child,
+  h2 + p.author-pp-flush,
   h3 + .author-pp-flush > p:first-child,
+  h3 + p.author-pp-flush,
   h4 + .author-pp-flush > p:first-child,
+  h4 + p.author-pp-flush,
   h5 + .author-pp-flush > p:first-child,
+  h5 + p.author-pp-flush,
   h6 + .author-pp-flush > p:first-child,
-  hr + .author-pp-flush > p:first-child {
+  h6 + p.author-pp-flush,
+  hr + .author-pp-flush > p:first-child,
+  hr + p.author-pp-flush {
     text-indent: 0 !important;
   }
 
