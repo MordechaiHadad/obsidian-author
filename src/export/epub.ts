@@ -1,6 +1,6 @@
 import JSZip from "jszip";
 import { buildEpubCss } from "../scope.ts";
-import type { Block, TextRunModel } from "./text.ts";
+import type { Block, Chapter, TextRunModel } from "./text.ts";
 
 export interface EpubOptions {
   /** Book/chapter title (note name). */
@@ -90,15 +90,36 @@ function blocksToXhtml(
     .join("\n");
 }
 
-/** Build an EPUB3 buffer from blocks: one chapter, our own indent stylesheet.
- * The stylesheet comes from buildEpubCss() in scope.ts — the single source
- * of truth for generated CSS shared with the print/PDF path. */
+/** Build an EPUB3 buffer from one note's blocks (chapter export). */
 export async function blocksToEpubBuffer(
   blocks: Block[],
   opts: EpubOptions,
 ): Promise<ArrayBuffer> {
+  return await chaptersToEpubBuffer([{ title: opts.title, blocks }], opts);
+}
+
+/** File name of chapter `index` inside OEBPS/. The first one keeps the
+ * plain `chapter.xhtml` name (single-chapter archives stay identical). */
+function chapterHref(index: number): string {
+  return index === 0 ? "chapter.xhtml" : `chapter-${index + 1}.xhtml`;
+}
+
+/** Build an EPUB3 buffer from chapters (novel export): one xhtml file per
+ * chapter with its own flush/drop-cap state, a manifest + spine entry each,
+ * and a nav TOC listing every chapter. `opts.title` is the book title.
+ * The stylesheet comes from buildEpubCss() in scope.ts — the single source
+ * of truth for generated CSS shared with the print/PDF path. */
+export async function chaptersToEpubBuffer(
+  chapters: Chapter[],
+  opts: EpubOptions,
+): Promise<ArrayBuffer> {
   const title = escapeXml(opts.title);
-  const body = blocksToXhtml(blocks, opts);
+  const contents = chapters.map((chapter, index) => ({
+    id: index === 0 ? "chapter" : `chapter-${index + 1}`,
+    href: chapterHref(index),
+    title: escapeXml(chapter.title || opts.title),
+    body: blocksToXhtml(chapter.blocks, opts),
+  }));
   const modified = new Date().toISOString().split(".")[0] + "Z";
 
   const container = `<?xml version="1.0" encoding="UTF-8"?>\n` +
@@ -106,6 +127,15 @@ export async function blocksToEpubBuffer(
     `  <rootfiles>\n` +
     `    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>\n` +
     `  </rootfiles>\n</container>\n`;
+
+  const manifest = contents
+    .map((c) =>
+      `    <item id="${c.id}" href="${c.href}" media-type="application/xhtml+xml"/>`
+    )
+    .join("\n");
+  const spine = contents
+    .map((c) => `    <itemref idref="${c.id}"/>`)
+    .join("\n");
 
   const opf = `<?xml version="1.0" encoding="UTF-8"?>\n` +
     `<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid" version="3.0">\n` +
@@ -116,25 +146,31 @@ export async function blocksToEpubBuffer(
     `    <meta property="dcterms:modified">${modified}</meta>\n` +
     `  </metadata>\n` +
     `  <manifest>\n` +
-    `    <item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/>\n` +
+    `${manifest}\n` +
     `    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>\n` +
     `    <item id="style" href="style.css" media-type="text/css"/>\n` +
     `  </manifest>\n` +
     `  <spine>\n` +
-    `    <itemref idref="chapter"/>\n` +
+    `${spine}\n` +
     `  </spine>\n</package>\n`;
 
-  const chapter = `<?xml version="1.0" encoding="UTF-8"?>\n` +
-    `<!DOCTYPE html>\n` +
-    `<html xmlns="http://www.w3.org/1999/xhtml">\n` +
-    `<head><title>${title}</title><link rel="stylesheet" type="text/css" href="style.css"/></head>\n` +
-    `<body>\n${body}\n</body>\n</html>\n`;
+  const xhtmlFiles = contents.map((c) => ({
+    href: c.href,
+    content: `<?xml version="1.0" encoding="UTF-8"?>\n` +
+      `<!DOCTYPE html>\n` +
+      `<html xmlns="http://www.w3.org/1999/xhtml">\n` +
+      `<head><title>${c.title}</title><link rel="stylesheet" type="text/css" href="style.css"/></head>\n` +
+      `<body>\n${c.body}\n</body>\n</html>\n`,
+  }));
 
+  const navItems = contents
+    .map((c) => `<li><a href="${c.href}">${c.title}</a></li>`)
+    .join("");
   const nav = `<?xml version="1.0" encoding="UTF-8"?>\n` +
     `<!DOCTYPE html>\n` +
     `<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">\n` +
     `<head><title>${title}</title></head>\n` +
-    `<body><nav epub:type="toc"><ol><li><a href="chapter.xhtml">${title}</a></li></ol></nav></body>\n` +
+    `<body><nav epub:type="toc"><ol>${navItems}</ol></nav></body>\n` +
     `</html>\n`;
 
   // mimetype must be the first entry, stored uncompressed.
@@ -142,7 +178,7 @@ export async function blocksToEpubBuffer(
   zip.file("mimetype", "application/epub+zip", { compression: "STORE" });
   zip.file("META-INF/container.xml", container);
   zip.file("OEBPS/content.opf", opf);
-  zip.file("OEBPS/chapter.xhtml", chapter);
+  for (const file of xhtmlFiles) zip.file(`OEBPS/${file.href}`, file.content);
   zip.file("OEBPS/nav.xhtml", nav);
   zip.file(
     "OEBPS/style.css",

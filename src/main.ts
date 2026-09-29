@@ -11,11 +11,22 @@ import {
   TFolder,
   WorkspaceLeaf,
 } from "obsidian";
-import { blocksToDocxBuffer } from "./export/docx.ts";
-import { blocksToEpubBuffer } from "./export/epub.ts";
+import { chaptersToDocxBuffer } from "./export/docx.ts";
+import { chaptersToEpubBuffer } from "./export/epub.ts";
+import {
+  EXPORT_FORMATS,
+  type ExportFormat,
+  ExportModal,
+} from "./export/export-modal.ts";
 import { noteToBlocks } from "./export/model.ts";
-import { noteToPdfBuffer } from "./export/print-pdf.ts";
+import { chaptersToPdfBuffer, type PdfChapter } from "./export/print-pdf.ts";
 import { chooseSavePath, writeAbsoluteFile } from "./export/save-dialog.ts";
+import { novelFiles } from "./export/target.ts";
+import {
+  type Chapter,
+  chapterTitleNeeded,
+  titleHeading,
+} from "./export/text.ts";
 import {
   buildPrintCss,
   isFirstParagraphSection,
@@ -35,6 +46,8 @@ interface AuthorSettings {
   removeIndentAfterHeading: boolean;
   lineHeight: string;
   enableDropCap: boolean;
+  /** Format preselected the next time the Export modal opens. */
+  lastExportFormat: ExportFormat;
 }
 
 const DEFAULT_SETTINGS: AuthorSettings = {
@@ -44,6 +57,7 @@ const DEFAULT_SETTINGS: AuthorSettings = {
   removeIndentAfterHeading: true,
   lineHeight: "1.7",
   enableDropCap: true,
+  lastExportFormat: "docx",
 };
 
 // Scope class + CSS variables consumed by styles.css. Applied per markdown
@@ -78,24 +92,26 @@ export default class AuthorPlugin extends Plugin {
     // Status indicator: visible proof of manuscript scope for the active note.
     this.statusEl = this.addStatusBarItem();
     this.addCommand({
-      id: "export-note-docx",
-      name: "Export current note to DOCX",
+      id: "export",
+      name: "Export…",
       callback: () => {
-        void this.exportNote("docx");
-      },
-    });
-    this.addCommand({
-      id: "export-note-epub",
-      name: "Export current note to EPUB",
-      callback: () => {
-        void this.exportNote("epub");
-      },
-    });
-    this.addCommand({
-      id: "export-note-pdf",
-      name: "Export current note to PDF (manuscript)",
-      callback: () => {
-        void this.exportNotePdf();
+        const active = this.app.workspace.getActiveFile();
+        new ExportModal(this.app, {
+          // Prefill the open note (chapter); fall back to the manuscript
+          // folder (novel) when there is no Markdown note to point at.
+          initialPath: active instanceof TFile && active.extension === "md"
+            ? active.path
+            : this.normalizedFolder(),
+          initialFormat: this.settings.lastExportFormat,
+          onFormatChange: (format) => {
+            this.settings.lastExportFormat = format;
+            // Format only: no full refresh() needed for a modal preference.
+            void this.saveData(this.settings);
+          },
+          onExport: (target, format) => {
+            void this.exportTarget(target, format);
+          },
+        }).open();
       },
     });
     // Tag rendered sections of manuscript notes (Reading view). Note:
@@ -289,6 +305,15 @@ export default class AuthorPlugin extends Plugin {
       | null
       | undefined;
     this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
+    // Reject a stored format from an older/foreign version instead of
+    // letting an unknown value reach the dropdown.
+    if (
+      this.settings.lastExportFormat !== "docx" &&
+      this.settings.lastExportFormat !== "epub" &&
+      this.settings.lastExportFormat !== "pdf"
+    ) {
+      this.settings.lastExportFormat = DEFAULT_SETTINGS.lastExportFormat;
+    }
   }
 
   async saveSettings() {
@@ -476,45 +501,84 @@ export default class AuthorPlugin extends Plugin {
     return suggestedVaultPath;
   }
 
-  /** Export the active Markdown note, preserving the first-line indent.
-   * Re-exporting overwrites the previous file next to the note. */
-  private async exportNote(format: "docx" | "epub"): Promise<void> {
-    const file = this.app.workspace.getActiveFile();
-    if (!(file instanceof TFile) || file.extension !== "md") {
-      new Notice("Obsidian Author: open a Markdown note to export.");
+  /** Export a chapter (one Markdown note) or a novel (every Markdown note
+   * under a folder, in reading order) in the chosen format. Builds one
+   * buffer, then opens the OS save dialog — vault-relative fallback on
+   * mobile. Re-exporting overwrites the previous file. Unlike native
+   * Export to PDF (which re-renders without post-processors and drops the
+   * indent for single-newline manuscripts), the PDF target prints a fully
+   * marked render through a hidden Electron window, from any view mode. */
+  async exportTarget(
+    target: TFile | TFolder,
+    format: ExportFormat,
+  ): Promise<void> {
+    if (target instanceof TFile && target.extension !== "md") {
+      new Notice("Obsidian Author: only Markdown notes can be exported.");
       return;
     }
+    const isNovel = target instanceof TFolder;
+    // Book title: the note's name, or the folder's (vault root included).
+    const title = isNovel
+      ? target.path === "/" ? "Manuscript" : target.name
+      : target.basename;
     try {
-      const content = await this.app.vault.read(file);
-      const blocks = await noteToBlocks(this.app, file, content);
-      if (blocks.length === 0) {
-        new Notice("Obsidian Author: nothing to export in this note.");
+      const chapters: Chapter[] = [];
+      const pdfChapters: PdfChapter[] = [];
+      let outDir = "";
+      if (isNovel) {
+        const files = novelFiles(this.app, target);
+        for (const file of files) {
+          const content = await this.app.vault.read(file);
+          const blocks = await noteToBlocks(this.app, file, content);
+          // Notes with no renderable prose don't become (empty) chapters.
+          if (blocks.length === 0) continue;
+          // Label the chapter with its file name so chapter headers survive
+          // every format — unless the note already opens with that heading.
+          const heading = chapterTitleNeeded(file.basename, blocks)
+            ? file.basename
+            : undefined;
+          chapters.push({
+            title: file.basename,
+            blocks: heading ? [titleHeading(heading), ...blocks] : blocks,
+          });
+          pdfChapters.push({ file, content, heading });
+        }
+        outDir = target.path === "/" ? "" : `${target.path}/`;
+      } else {
+        const content = await this.app.vault.read(target);
+        const blocks = await noteToBlocks(this.app, target, content);
+        if (blocks.length > 0) {
+          const heading = chapterTitleNeeded(target.basename, blocks)
+            ? target.basename
+            : undefined;
+          chapters.push({
+            title: target.basename,
+            blocks: heading ? [titleHeading(heading), ...blocks] : blocks,
+          });
+          pdfChapters.push({ file: target, content, heading });
+        }
+        outDir = target.parent && target.parent.path !== "/"
+          ? `${target.parent.path}/`
+          : "";
+      }
+      if (chapters.length === 0) {
+        new Notice("Obsidian Author: nothing to export.");
         return;
       }
-      const ext = format;
-      const buffer = format === "docx"
-        ? await blocksToDocxBuffer(
-          blocks,
-          this.settings.indentSize,
-          this.settings.lineHeight,
-          this.settings.enableDropCap,
-        )
-        : await blocksToEpubBuffer(blocks, {
-          title: file.basename,
-          indent: this.sanitizeIndent(this.settings.indentSize),
-          lineHeight: this.sanitizeLineHeight(this.settings.lineHeight),
-          enableIndent: this.settings.enableIndent,
-          flushAfterHeading: this.settings.removeIndentAfterHeading,
-          enableDropCap: this.settings.enableDropCap,
-        });
-      const dir = file.parent && file.parent.path !== "/"
-        ? `${file.parent.path}/`
-        : "";
-      const outPath = `${dir}${file.basename}.${ext}`;
+      if (format === "pdf") {
+        new Notice("Obsidian Author: rendering manuscript PDF…");
+      }
+      const buffer = await this.buildExportBuffer(
+        format,
+        title,
+        chapters,
+        pdfChapters,
+      );
+      const meta = EXPORT_FORMATS[format];
       const saved = await this.saveExportBuffer(
-        outPath,
-        format === "docx" ? "Word Document" : "EPUB e-book",
-        ext,
+        `${outDir}${title}.${meta.ext}`,
+        meta.filter,
+        meta.ext,
         buffer,
       );
       if (saved) new Notice(`Obsidian Author: exported ${saved}.`);
@@ -528,41 +592,42 @@ export default class AuthorPlugin extends Plugin {
     }
   }
 
-  /** Export the active note to PDF with manuscript typography. Unlike native
-   * Export to PDF (which re-renders without post-processors and drops the
-   * indent for single-newline manuscripts), this prints a fully-marked
-   * render through a hidden Electron window. Works from any view mode.
-   * Re-exporting overwrites the previous file next to the note. */
-  private async exportNotePdf(): Promise<void> {
-    const file = this.app.workspace.getActiveFile();
-    if (!(file instanceof TFile) || file.extension !== "md") {
-      new Notice("Obsidian Author: open a Markdown note to export.");
-      return;
-    }
-    try {
-      new Notice("Obsidian Author: rendering manuscript PDF…");
-      const content = await this.app.vault.read(file);
-      const buffer = await noteToPdfBuffer(this.app, file, content, {
-        indent: this.sanitizeIndent(this.settings.indentSize),
-        lineHeight: this.sanitizeLineHeight(this.settings.lineHeight),
+  /** Run the writer for `format`. DOCX/EPUB consume the parsed block model;
+   * PDF renders the raw markdown itself (each note keeps its own source
+   * path, so links and embeds resolve per chapter). */
+  private async buildExportBuffer(
+    format: ExportFormat,
+    title: string,
+    chapters: Chapter[],
+    pdfChapters: PdfChapter[],
+  ): Promise<ArrayBuffer> {
+    const indent = this.sanitizeIndent(this.settings.indentSize);
+    const lineHeight = this.sanitizeLineHeight(this.settings.lineHeight);
+    if (format === "pdf") {
+      return await chaptersToPdfBuffer(this.app, pdfChapters, {
+        indent,
+        lineHeight,
         flushAfterHeading: this.settings.removeIndentAfterHeading,
         enableIndent: this.settings.enableIndent,
         enableDropCap: this.settings.enableDropCap,
-      });
-      const dir = file.parent && file.parent.path !== "/"
-        ? `${file.parent.path}/`
-        : "";
-      const outPath = `${dir}${file.basename}.pdf`;
-      const saved = await this.saveExportBuffer(outPath, "PDF", "pdf", buffer);
-      if (saved) new Notice(`Obsidian Author: exported ${saved}.`);
-    } catch (error) {
-      console.error("[Obsidian Author] PDF export failed:", error);
-      new Notice(
-        `Obsidian Author: PDF export failed (${
-          error instanceof Error ? error.message : String(error)
-        }).`,
+      }, title);
+    }
+    if (format === "docx") {
+      return await chaptersToDocxBuffer(
+        chapters,
+        this.settings.indentSize,
+        this.settings.lineHeight,
+        this.settings.enableDropCap,
       );
     }
+    return await chaptersToEpubBuffer(chapters, {
+      title,
+      indent,
+      lineHeight,
+      enableIndent: this.settings.enableIndent,
+      flushAfterHeading: this.settings.removeIndentAfterHeading,
+      enableDropCap: this.settings.enableDropCap,
+    });
   }
 }
 

@@ -18,6 +18,41 @@ export type Block =
   | { kind: "list"; ordered: boolean; items: TextRunModel[][] }
   | { kind: "break" };
 
+/** One export unit: a note's title plus its parsed blocks. A chapter export
+ * is a single entry; a novel export is one entry per note in the folder, in
+ * reading order. Writers reset their per-note conventions (flush first
+ * paragraph, drop cap, page break) at every chapter boundary. */
+export interface Chapter {
+  title: string;
+  blocks: Block[];
+}
+
+/** A level-1 title heading: the chapter's file name, prepended to the note so
+ * every exported chapter is labelled in DOCX, EPUB and PDF alike. */
+export function titleHeading(text: string): Block {
+  return {
+    kind: "heading",
+    level: 1,
+    runs: [{ text, bold: false, italic: false, strike: false, code: false }],
+  };
+}
+
+/** Case- and whitespace-insensitive form used to compare a chapter title with
+ * a note's own first heading. */
+function normalizeTitle(text: string): string {
+  return text.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+/** Whether the chapter-title heading still needs to be prepended: only when
+ * the note doesn't already open with a heading whose text is the chapter
+ * name (never duplicate a title the author already wrote). */
+export function chapterTitleNeeded(title: string, blocks: Block[]): boolean {
+  const first = blocks[0];
+  if (!first || first.kind !== "heading") return true;
+  const text = first.runs.map((run) => run.text).join("");
+  return normalizeTitle(text) !== normalizeTitle(title);
+}
+
 /** Split runs into segments at soft line breaks ("\n" inside text).
  * Each segment keeps its run flags; empty segments are kept and filtered
  * by the caller via hasText. Pure and unit-tested. */

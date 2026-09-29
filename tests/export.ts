@@ -1,14 +1,26 @@
 import JSZip from "jszip";
-import { blocksToDocxBuffer, lengthToTwips } from "../src/export/docx.ts";
-import { blocksToEpubBuffer } from "../src/export/epub.ts";
+import {
+  blocksToDocxBuffer,
+  chaptersToDocxBuffer,
+  lengthToTwips,
+} from "../src/export/docx.ts";
+import {
+  blocksToEpubBuffer,
+  chaptersToEpubBuffer,
+} from "../src/export/epub.ts";
 import {
   countWords,
   formatPrintPages,
   WORDS_PER_PAGE,
   wordsToPages,
 } from "../src/stats.ts";
-import type { Block, TextRunModel } from "../src/export/text.ts";
-import { splitOnBreaks } from "../src/export/text.ts";
+import type { Block, Chapter, TextRunModel } from "../src/export/text.ts";
+import {
+  chapterTitleNeeded,
+  splitOnBreaks,
+  titleHeading,
+} from "../src/export/text.ts";
+import { compareChapterPaths } from "../src/export/target.ts";
 import {
   buildEpubCss,
   buildPrintCss,
@@ -259,6 +271,184 @@ check(
   noIndent.css.includes("p { text-indent: 0 !important;") &&
     noIndent.chapter.includes('<p class="flush">One</p>') &&
     noIndent.chapter.includes('<p class="flush">Two</p>'),
+);
+
+// --- Novel export: one section per chapter ---
+const count = (haystack: string, needle: string) =>
+  haystack.split(needle).length - 1;
+const novelChapters: Chapter[] = [
+  { title: "Chapter One", blocks },
+  { title: "Chapter Two", blocks: [headingBlock, para("Second chapter.")] },
+];
+
+const novelDocxBuf = await chaptersToDocxBuffer(novelChapters, "2em", "1.7");
+const novelDocxZip = await JSZip.loadAsync(novelDocxBuf);
+const novelDocxXml = await novelDocxZip.file("word/document.xml")
+  ?.async("string") ?? "";
+check(
+  "docx: chapter 2 starts on a new page",
+  novelDocxXml.includes(
+    "<w:pageBreakBefore/>",
+  ),
+);
+check(
+  "docx: exactly one page break for two chapters",
+  count(novelDocxXml, "<w:pageBreakBefore/>") === 1,
+);
+check(
+  "docx: single-chapter export never breaks the page",
+  !docXml.includes("<w:pageBreakBefore/>"),
+);
+check(
+  "docx: every chapter's first paragraph is flush",
+  count(novelDocxXml, 'w:firstLine="0"') === 2,
+);
+const novelDropcapBuf = await chaptersToDocxBuffer(
+  novelChapters,
+  "2em",
+  "1.7",
+  true,
+);
+const novelDropcapXml = await (await JSZip.loadAsync(novelDropcapBuf)).file(
+  "word/document.xml",
+)?.async("string") ?? "";
+check(
+  "docx: drop cap on each chapter's first paragraph",
+  count(novelDropcapXml, 'w:dropCap="drop"') === 2,
+);
+
+const novelEpubBuf = await chaptersToEpubBuffer(novelChapters, {
+  title: "My Novel",
+  indent: "2em",
+  lineHeight: "1.7",
+});
+const novelEpubZip = await JSZip.loadAsync(novelEpubBuf);
+check(
+  "epub: one xhtml file per chapter",
+  !!novelEpubZip.file("OEBPS/chapter.xhtml") &&
+    !!novelEpubZip.file("OEBPS/chapter-2.xhtml"),
+);
+const novelOpf =
+  await novelEpubZip.file("OEBPS/content.opf")?.async("string") ??
+    "";
+check(
+  "epub: book title in metadata",
+  novelOpf.includes("<dc:title>My Novel</dc:title>"),
+);
+check(
+  "epub: manifest + spine carry every chapter",
+  novelOpf.includes(
+    '<item id="chapter-2" href="chapter-2.xhtml" media-type="application/xhtml+xml"/>',
+  ) && count(novelOpf, "<itemref ") === 2,
+);
+const novelNav = await novelEpubZip.file("OEBPS/nav.xhtml")?.async("string") ??
+  "";
+const navOne = novelNav.indexOf('<a href="chapter.xhtml">Chapter One</a>');
+const navTwo = novelNav.indexOf('<a href="chapter-2.xhtml">Chapter Two</a>');
+check(
+  "epub: nav TOC lists chapters in reading order",
+  navOne !== -1 && navTwo > navOne,
+);
+const novelChapter2 = await novelEpubZip.file("OEBPS/chapter-2.xhtml")
+  ?.async("string") ?? "";
+check(
+  "epub: chapter 2 keeps its own first-paragraph state (flush)",
+  novelChapter2.includes(
+    '<h1>Title</h1>\n<p class="flush">Second chapter.</p>',
+  ),
+);
+
+// --- Chapter titles: the file name labels every exported chapter ---
+check(
+  "title: needed when the note opens with a paragraph",
+  chapterTitleNeeded("1 - Awakening", [para("Once upon a time.")]),
+);
+check(
+  "title: not needed when the note already opens with that heading",
+  !chapterTitleNeeded("1 - Awakening", [titleHeading("1 - Awakening")]),
+);
+check(
+  "title: comparison ignores case and repeated whitespace",
+  !chapterTitleNeeded("Ch 1", [titleHeading("  CH   1  ")]),
+);
+check(
+  "title: a different opening heading still gets the chapter name",
+  chapterTitleNeeded("1 - Awakening", [titleHeading("Prologue")]),
+);
+check(
+  "title: heading block is level 1 and keeps markdown punctuation literal",
+  (() => {
+    const heading = titleHeading('Ch*1: [Act]"');
+    return heading.kind === "heading" && heading.level === 1 &&
+      heading.runs[0].text === 'Ch*1: [Act]"';
+  })(),
+);
+
+const titledChapters: Chapter[] = [
+  {
+    title: "1 - Awakening",
+    blocks: [titleHeading("1 - Awakening"), para("The story begins.")],
+  },
+  {
+    title: "2 - Return",
+    blocks: [titleHeading("2 - Return"), para("And continues.")],
+  },
+];
+
+const titledDocxBuf = await chaptersToDocxBuffer(titledChapters, "2em", "1.7");
+const titledDocxXml = await (await JSZip.loadAsync(titledDocxBuf)).file(
+  "word/document.xml",
+)?.async("string") ?? "";
+check(
+  "docx: chapter titles render as level-1 headings",
+  count(titledDocxXml, 'w:pStyle w:val="Heading1"') === 2 &&
+    titledDocxXml.includes("1 - Awakening"),
+);
+check(
+  "docx: the page break lands on chapter 2's title",
+  count(titledDocxXml, "<w:pageBreakBefore/>") === 1,
+);
+const titledDropcapXml = await (await JSZip.loadAsync(
+  await chaptersToDocxBuffer(titledChapters, "2em", "1.7", true),
+)).file("word/document.xml")?.async("string") ?? "";
+check(
+  "docx: the title heading doesn't consume the drop cap",
+  count(titledDropcapXml, 'w:dropCap="drop"') === 2,
+);
+
+const titledEpubBuf = await chaptersToEpubBuffer(titledChapters, {
+  title: "My Novel",
+  indent: "2em",
+  lineHeight: "1.7",
+  enableDropCap: true,
+});
+const titledEpubZip = await JSZip.loadAsync(titledEpubBuf);
+const titledChapterOne = await titledEpubZip.file("OEBPS/chapter.xhtml")
+  ?.async("string") ?? "";
+check(
+  "epub: chapter title heading sits at the top of the chapter body",
+  titledChapterOne.includes(
+    '<h1>1 - Awakening</h1>\n<p class="flush dropcap">The story begins.</p>',
+  ),
+);
+const titledChapterTwo = await titledEpubZip.file("OEBPS/chapter-2.xhtml")
+  ?.async("string") ?? "";
+check(
+  "epub: each chapter opens with its own title heading",
+  titledChapterTwo.includes(
+    '<h1>2 - Return</h1>\n<p class="flush dropcap">And continues.</p>',
+  ),
+);
+
+// --- Novel reading order (1 file = chapter, folder = novel) ---
+check(
+  "order: natural sort puts Ch2 before Ch10",
+  compareChapterPaths("Manuscript/Ch2.md", "Manuscript/Ch10.md") < 0 &&
+    compareChapterPaths("Manuscript/Ch10.md", "Manuscript/Ch2.md") > 0,
+);
+check(
+  "order: case-insensitive tie-break",
+  compareChapterPaths("Manuscript/ch1.md", "Manuscript/Ch1.md") === 0,
 );
 
 // --- Pure units ---
