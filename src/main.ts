@@ -533,43 +533,32 @@ export default class AuthorPlugin extends Plugin {
     try {
       const chapters: Chapter[] = [];
       const pdfChapters: PdfChapter[] = [];
-      let outDir = "";
-      if (isNovel) {
-        const files = novelFiles(this.app, target);
-        for (const file of files) {
-          const content = await this.app.vault.read(file);
-          const blocks = await noteToBlocks(this.app, file, content);
-          // Notes with no renderable prose don't become (empty) chapters.
-          if (blocks.length === 0) continue;
-          // Label the chapter with its file name so chapter headers survive
-          // every format — unless the note already opens with that heading.
-          const heading = chapterTitleNeeded(file.basename, blocks)
-            ? file.basename
-            : undefined;
-          chapters.push({
-            title: file.basename,
-            blocks: heading ? [titleHeading(heading), ...blocks] : blocks,
-          });
-          pdfChapters.push({ file, content, heading });
-        }
-        outDir = target.path === "/" ? "" : `${target.path}/`;
-      } else {
-        const content = await this.app.vault.read(target);
-        const blocks = await noteToBlocks(this.app, target, content);
-        if (blocks.length > 0) {
-          const heading = chapterTitleNeeded(target.basename, blocks)
-            ? target.basename
-            : undefined;
-          chapters.push({
-            title: target.basename,
-            blocks: heading ? [titleHeading(heading), ...blocks] : blocks,
-          });
-          pdfChapters.push({ file: target, content, heading });
-        }
-        outDir = target.parent && target.parent.path !== "/"
-          ? `${target.parent.path}/`
-          : "";
+      const files = target instanceof TFolder
+        ? novelFiles(this.app, target)
+        : [target];
+      for (const file of files) {
+        const content = await this.app.vault.read(file);
+        const blocks = await noteToBlocks(this.app, file, content);
+        // Notes with no renderable prose don't become (empty) chapters.
+        if (blocks.length === 0) continue;
+        // Label the chapter with its file name so chapter headers survive
+        // every format — unless the note already opens with that heading.
+        const heading = chapterTitleNeeded(file.basename, blocks)
+          ? file.basename
+          : undefined;
+        chapters.push({
+          title: file.basename,
+          blocks: heading ? [titleHeading(heading), ...blocks] : blocks,
+        });
+        pdfChapters.push({ file, content, heading });
       }
+      const outDir = target instanceof TFolder
+        ? target.path === "/"
+          ? ""
+          : `${target.path}/`
+        : target.parent && target.parent.path !== "/"
+        ? `${target.parent.path}/`
+        : "";
       if (chapters.length === 0) {
         new Notice("Obsidian Author: nothing to export.");
         return;
