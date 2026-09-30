@@ -3,12 +3,20 @@ import {
   AbstractInputSuggest,
   Modal,
   Notice,
+  Platform,
   Setting,
   TFile,
   TFolder,
 } from "obsidian";
 import type { App, TAbstractFile } from "obsidian";
 import { novelFiles } from "./target.ts";
+
+/** PDF renders through a hidden Electron window (export/print-pdf.ts), so
+ * only the desktop app can produce it — on mobile the format is listed as
+ * "(needs PC)" and cannot be selected. */
+export function isPdfAvailable(): boolean {
+  return Platform.isDesktopApp;
+}
 
 /** Every export target the writer stack supports. */
 export type ExportFormat = "docx" | "epub" | "pdf";
@@ -43,7 +51,11 @@ export class ExportModal extends Modal {
 
   constructor(app: App, private options: ExportModalOptions) {
     super(app);
-    this.format = options.initialFormat;
+    // The choice is remembered across devices: a desktop "pdf" would land on
+    // a disabled option here, so fall back to the default format.
+    this.format = options.initialFormat === "pdf" && !isPdfAvailable()
+      ? "docx"
+      : options.initialFormat;
   }
 
   override onOpen(): void {
@@ -78,8 +90,23 @@ export class ExportModal extends Modal {
     new Setting(contentEl)
       .setName("Format")
       .addDropdown((dropdown) => {
+        const pdfAvailable = isPdfAvailable();
         for (const [value, meta] of Object.entries(EXPORT_FORMATS)) {
-          dropdown.addOption(value, meta.label);
+          dropdown.addOption(
+            value,
+            value === "pdf" && !pdfAvailable
+              ? `${meta.label} (needs PC)`
+              : meta.label,
+          );
+        }
+        // Grey out the row instead of hiding it, so it is obvious why PDF is
+        // not on offer here. Setting the <option> alone does it: the control
+        // is a plain <select>.
+        if (!pdfAvailable) {
+          const option = dropdown.selectEl.querySelector<HTMLOptionElement>(
+            'option[value="pdf"]',
+          );
+          if (option) option.disabled = true;
         }
         dropdown.setValue(this.format);
         dropdown.onChange((value) => {

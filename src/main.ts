@@ -17,6 +17,7 @@ import {
   EXPORT_FORMATS,
   type ExportFormat,
   ExportModal,
+  isPdfAvailable,
 } from "./export/export-modal.ts";
 import { noteToBlocks } from "./export/model.ts";
 import { chaptersToPdfBuffer, type PdfChapter } from "./export/print-pdf.ts";
@@ -514,6 +515,14 @@ export default class AuthorPlugin extends Plugin {
   ): Promise<void> {
     if (target instanceof TFile && target.extension !== "md") {
       new Notice("Obsidian Author: only Markdown notes can be exported.");
+      return;
+    }
+    // The modal already greys PDF out on mobile; this covers a desktop-persisted
+    // "pdf" reaching a build without Electron's print window.
+    if (format === "pdf" && !isPdfAvailable()) {
+      new Notice(
+        "Obsidian Author: PDF export needs PC — use the desktop app, or export DOCX/EPUB here.",
+      );
       return;
     }
     const isNovel = target instanceof TFolder;
